@@ -11,7 +11,7 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/basesline_seq2seq_2.0kwarm/<seed>
+output_folder: !ref results/500h_basesline_seq2seq_10kwarm/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -30,15 +30,14 @@ data_folder: !PLACEHOLDER # e.g., /path/to/LibriSpeech
 # then data_folder_rirs should be /localscratch/xxx_corpus
 # otherwise the dataset will automatically be downloaded
 # data_folder_rirs: !ref <data_folder>
-train_splits: ["train-clean-100"]
+train_splits: ["train-other-500"]
 dev_splits: ["dev-clean"]
-test_splits: ["test-clean", "test-other"]
+test_splits: ["test-clean"]
 skip_prep: False
 train_csv: !ref <output_folder>/train.csv
 valid_csv: !ref <output_folder>/dev-clean.csv
 test_csv:
     - !ref <output_folder>/test-clean.csv
-    - !ref <output_folder>/test-other.csv
 
 ckpt_interval_minutes: 30 # save checkpoint every N min
 
@@ -50,7 +49,7 @@ ckpt_interval_minutes: 30 # save checkpoint every N min
 number_of_epochs: 60
 batch_size: 24 # 16G for 24
 ctc_weight: 0.3
-grad_accumulation_factor: 2
+grad_accumulation_factor: 2 # since it is 2, gradient step per iter == steps // 2
 max_grad_norm: 5.0
 loss_reduction: 'batchmean'
 sorting: random
@@ -185,10 +184,7 @@ Adam: !name:torch.optim.Adam
     betas: (0.9, 0.98)
     eps: 0.000000001
 
-# add my use_cache argument true or false!
-# weight caching will be implemented by:
-# 1. forward_step() is response to pass in past decoding representation.
-# 2. For a new batch, forward_step() will re-intialize an empty decodiing list.
+
 valid_search: !new:speechbrain.decoders.S2STransformerBeamSearch
     modules: [!ref <Transformer>, !ref <seq_lin>, !ref <ctc_lin>]
     bos_index: !ref <bos_index>
@@ -201,7 +197,7 @@ valid_search: !new:speechbrain.decoders.S2STransformerBeamSearch
     using_eos_threshold: False
     length_normalization: False
 
-# add my use_cache argument as true or false!
+
 test_search: !new:speechbrain.decoders.S2STransformerBeamSearch
     modules: [!ref <Transformer>, !ref <seq_lin>, !ref <ctc_lin>]
     bos_index: !ref <bos_index>
@@ -231,7 +227,7 @@ seq_cost: !name:speechbrain.nnet.losses.kldiv_loss
 
 noam_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr_adam>
-    n_warmup_steps: 2000 # best 1900
+    n_warmup_steps: 10000 # 
 
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>
