@@ -1078,7 +1078,11 @@ class Brain:
             disable=not enable,
             colour=self.tqdm_barcolor["train"],
         ) as t:
+            count = 0
             for batch in t:
+                # count += 1
+                # if count > 4:
+                #     break
                 if self._optimizer_step_limit_exceeded:
                     logger.info("Train iteration limit exceeded")
                     break

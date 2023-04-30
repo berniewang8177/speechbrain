@@ -575,6 +575,7 @@ class TransformerDecoderLayer(nn.Module):
         self,
         tgt,
         memory,
+        cache=None,
         tgt_mask=None,
         memory_mask=None,
         tgt_key_padding_mask=None,
@@ -589,6 +590,9 @@ class TransformerDecoderLayer(nn.Module):
             The sequence to the decoder layer (required).
         memory: tensor
             The sequence from the last layer of the encoder (required).
+        cache: None or Tensor
+            Cached weight from prior decoding step.
+            Dimension: batch x horizon x dim
         tgt_mask: tensor
             The mask for the tgt sequence (optional).
         memory_mask: tensor
@@ -598,20 +602,34 @@ class TransformerDecoderLayer(nn.Module):
         memory_key_padding_mask: tensor
             The mask for the memory keys per batch (optional).
         """
+        
         if self.normalize_before:
             tgt1 = self.norm1(tgt)
         else:
             tgt1 = tgt
 
-        # self-attention over the target sequence
+        # if cache is still empty or cache is Nne (not weight caching)
+        # normal computation
+        if cache is None or (cache is not None and cache.shape[1] == 0):
+            normal = True
+        else:
+            normal = False
+            mem_tgt1 = torch.cat([cache, tgt1], dim = 1)
+            # decoding is autoregressive, attend everything before it
+            # thus, tgt_mask for self.self.attn is None
+
+        # self-attention over the target sequence + weight caching
         tgt2, self_attn = self.self_attn(
             query=tgt1,
-            key=tgt1,
-            value=tgt1,
-            attn_mask=tgt_mask,
-            key_padding_mask=tgt_key_padding_mask,
+            key=tgt1 if normal else mem_tgt1,
+            value=tgt1 if normal else mem_tgt1,
+            attn_mask=tgt_mask if normal else None, 
+            key_padding_mask=tgt_key_padding_mask, 
             pos_embs=pos_embs_tgt,
         )
+
+        if cache is not None:
+            assert tgt2.shape[1] == 1, f"Shape of self-attn with weight cache wrong \n expect B 1, now it is {tgt2.shape}"
 
         # add & norm
         tgt = tgt + self.dropout1(tgt2)
@@ -624,7 +642,7 @@ class TransformerDecoderLayer(nn.Module):
             tgt1 = tgt
 
         # multi-head attention over the target sequence and encoder states
-
+        # For weight caching, no changes.
         tgt2, multihead_attention = self.mutihead_attn(
             query=tgt1,
             key=memory,
@@ -720,6 +738,7 @@ class TransformerDecoder(nn.Module):
         self,
         tgt,
         memory,
+        cache=None,
         tgt_mask=None,
         memory_mask=None,
         tgt_key_padding_mask=None,
@@ -734,6 +753,8 @@ class TransformerDecoder(nn.Module):
             The sequence to the decoder layer (required).
         memory : tensor
             The sequence from the last layer of the encoder (required).
+        cache: Dictionary of tensor
+            layer: batch x horizon x dim
         tgt_mask : tensor
             The mask for the tgt sequence (optional).
         memory_mask : tensor
@@ -745,10 +766,12 @@ class TransformerDecoder(nn.Module):
         """
         output = tgt
         self_attns, multihead_attns = [], []
-        for dec_layer in self.layers:
+
+        for idx, dec_layer in enumerate(self.layers):
             output, self_attn, multihead_attn = dec_layer(
                 output,
                 memory,
+                cache=None if cache is None else cache[idx],
                 tgt_mask=tgt_mask,
                 memory_mask=memory_mask,
                 tgt_key_padding_mask=tgt_key_padding_mask,
@@ -758,9 +781,12 @@ class TransformerDecoder(nn.Module):
             )
             self_attns.append(self_attn)
             multihead_attns.append(multihead_attn)
+            if cache is not None:
+                cache[idx] = torch.cat([ cache[idx], output.detach()], dim = 1)
+
         output = self.norm(output)
 
-        return output, self_attns, multihead_attns
+        return output, self_attns, multihead_attns, cache
 
 
 class NormalizedEmbedding(nn.Module):

@@ -452,6 +452,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
         min_decode_ratio,
         max_decode_ratio,
         beam_size,
+        use_cache = False, # whether using cached weight during decoding. 
         topk=1,
         return_log_probs=False,
         using_eos_threshold=True,
@@ -479,6 +480,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
         self.length_rewarding = length_rewarding
         self.coverage_penalty = coverage_penalty
         self.coverage = None
+        self.use_cache = use_cache
 
         if self.length_normalization and self.length_rewarding > 0:
             raise ValueError(
@@ -760,13 +762,22 @@ class S2SBeamSearcher(S2SBaseSearcher):
         # This variable will be used when using_max_attn_shift=True
         prev_attn_peak = torch.zeros(batch_size * self.beam_size, device=device)
 
+        # Initialize weight cache
+        if self.use_cache:
+            # setting up weight cache for efficient decoding
+            cache = { 
+                key:torch.empty( batch_size * self.beam_size, 0, self.model.decode_dim , device=device ) 
+                for key in range(self.model.decode_layers) }
+        else:
+            cache = None
+
         for t in range(max_decode_steps):
             # terminate condition
             if self._check_full_beams(hyps_and_scores, self.beam_size):
                 break
-
-            log_probs, memory, attn = self.forward_step(
-                inp_tokens, memory, enc_states, enc_lens
+            # forward_step will modifed the representation in cache
+            log_probs, memory, attn, cache = self.forward_step(
+                inp_tokens, memory, enc_states, enc_lens, cache
             )
             log_probs = self.att_weight * log_probs
 
@@ -1345,12 +1356,19 @@ class S2STransformerBeamSearch(S2SBeamSearcher):
         memory = torch.index_select(memory, dim=0, index=index)
         return memory
 
-    def forward_step(self, inp_tokens, memory, enc_states, enc_lens):
+    def forward_step(self, inp_tokens, memory, enc_states, enc_lens, cache):
         """Performs a step in the implemented beamsearcher."""
         memory = _update_mem(inp_tokens, memory)
-        pred, attn = self.model.decode(memory, enc_states)
+        # print("1362 at seq2seq, check cache")
+        # for i in cache:
+        #     print(f"Layer {i} :  cache shape {cache[i].shape}" )
+        if cache != None:
+            pred, attn, cache = self.model.decode_use_cache(memory, enc_states, cache)
+        else:
+            assert False, f"F**k, wrong argument maybe?, {cache}"
+            pred, attn = self.model.decode(memory, enc_states)
         prob_dist = self.softmax(self.fc(pred) / self.temperature)
-        return prob_dist[:, -1, :], memory, attn
+        return prob_dist[:, -1, :], memory, attn, cache
 
     def lm_forward_step(self, inp_tokens, memory):
         """Performs a step in the implemented LM module."""

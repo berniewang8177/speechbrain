@@ -123,6 +123,10 @@ class TransformerASR(TransformerInterface):
             max_length=max_length,
             causal=causal,
         )
+        # save this for decoding weight cache
+        # assume the smallest the decoder (for our interleaveformer, encoder == decoder)
+        self.decode_layers = min([num_encoder_layers, num_decoder_layers])
+        self.decode_dim = d_model
 
         self.custom_src_module = ModuleList(
             Linear(
@@ -194,7 +198,7 @@ class TransformerASR(TransformerInterface):
             pos_embs_target = None
             pos_embs_encoder = None
 
-        decoder_out, _, _ = self.decoder(
+        decoder_out, _, _, _ = self.decoder(
             tgt=tgt,
             memory=encoder_out,
             memory_mask=src_mask,
@@ -259,7 +263,7 @@ class TransformerASR(TransformerInterface):
             pos_embs_target = None
             pos_embs_encoder = None
 
-        prediction, self_attns, multihead_attns = self.decoder(
+        prediction, self_attns, multihead_attns, _ = self.decoder(
             tgt,
             encoder_out,
             tgt_mask=tgt_mask,
@@ -269,6 +273,51 @@ class TransformerASR(TransformerInterface):
         )
         return prediction, multihead_attns[-1]
 
+    @torch.no_grad()
+    def decode_use_cache(self, tgt, encoder_out, cache, enc_len=None):
+        """This method implements a decoding step for the transformer model.
+        It use weight_caching to improve decoding speed.
+        Arguments
+        ---------
+        tgt : torch.Tensor
+            The sequence to the decoder.
+        encoder_out : torch.Tensor
+            Hidden output of the encoder.
+        cache: Dictionary of torch.Tensor
+            Cached weight for previous decoding step. A dictionry where key is layer index
+            Each value of the dictionry is 3d tensor: batch x horizon x dim 
+        enc_len : torch.LongTensor
+            The actual length of encoder states.
+        """
+        tgt_mask = get_lookahead_mask(tgt)
+        src_key_padding_mask = None
+        if enc_len is not None:
+            src_key_padding_mask = (1 - length_to_mask(enc_len)).bool()
+
+        tgt = self.custom_tgt_module(tgt)
+        if self.attention_type == "RelPosMHAXL":
+            # use standard sinusoidal pos encoding in decoder
+            tgt = tgt + self.positional_encoding_decoder(tgt)
+            pos_embs_encoder = None  # self.positional_encoding(src)
+            pos_embs_target = None
+        elif self.positional_encoding_type == "fixed_abs_sine":
+            tgt = tgt + self.positional_encoding(tgt)
+            pos_embs_target = None
+            pos_embs_encoder = None
+        # we only need the last one.
+        tgt = tgt[:,-1:, :]
+        # print(f"print at 308 TransformerASR {tgt.shape}" )
+        prediction, self_attns, multihead_attns, cache = self.decoder(
+            tgt,
+            encoder_out,
+            cache=cache,
+            tgt_mask=tgt_mask,
+            memory_key_padding_mask=src_key_padding_mask,
+            pos_embs_tgt=pos_embs_target,
+            pos_embs_src=pos_embs_encoder,
+        )
+        return prediction, multihead_attns[-1], cache
+    
     def encode(self, src, wav_len=None):
         """
         Encoder forward pass
