@@ -608,28 +608,24 @@ class TransformerDecoderLayer(nn.Module):
         else:
             tgt1 = tgt
 
-        # if cache is still empty or cache is Nne (not weight caching)
-        # normal computation
-        if cache is None or (cache is not None and cache.shape[1] == 0):
-            normal = True
-        else:
-            normal = False
-            mem_tgt1 = torch.cat([cache, tgt1], dim = 1)
-            # decoding is autoregressive, attend everything before it
-            # thus, tgt_mask for self.self.attn is None
-
-        # self-attention over the target sequence + weight caching
+        # self-attention over the target sequence + without weight caching
         tgt2, self_attn = self.self_attn(
             query=tgt1,
-            key=tgt1 if normal else mem_tgt1,
-            value=tgt1 if normal else mem_tgt1,
-            attn_mask=tgt_mask if normal else None, 
+            key=tgt1,
+            value=tgt1,
+            attn_mask=tgt_mask, 
             key_padding_mask=tgt_key_padding_mask, 
             pos_embs=pos_embs_tgt,
         )
 
-        if cache is not None:
-            assert tgt2.shape[1] == 1, f"Shape of self-attn with weight cache wrong \n expect B 1, now it is {tgt2.shape}"
+        # if cache is still empty or cache is None (not weight caching)
+        # normal computation
+        if cache is None or (cache is not None and cache.shape[1] == 0):
+            pass
+        else:
+            # weight caching
+            tgt = tgt[:,-1:, :]
+            tgt2 = tgt2[:, -1:, :]
 
         # add & norm
         tgt = tgt + self.dropout1(tgt2)
@@ -668,6 +664,10 @@ class TransformerDecoderLayer(nn.Module):
         tgt = tgt + self.dropout3(tgt2)
         if not self.normalize_before:
             tgt = self.norm3(tgt)
+
+        # during decoding, update the result with cache
+        if cache is not None:
+            tgt = torch.cat([cache, tgt], dim = 1)
 
         return tgt, self_attn, multihead_attention
 

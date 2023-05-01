@@ -304,9 +304,7 @@ class TransformerASR(TransformerInterface):
             tgt = tgt + self.positional_encoding(tgt)
             pos_embs_target = None
             pos_embs_encoder = None
-        # we only need the last one.
-        tgt = tgt[:,-1:, :]
-        # print(f"print at 308 TransformerASR {tgt.shape}" )
+
         prediction, self_attns, multihead_attns, cache = self.decoder(
             tgt,
             encoder_out,

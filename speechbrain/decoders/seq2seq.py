@@ -1359,9 +1359,6 @@ class S2STransformerBeamSearch(S2SBeamSearcher):
     def forward_step(self, inp_tokens, memory, enc_states, enc_lens, cache):
         """Performs a step in the implemented beamsearcher."""
         memory = _update_mem(inp_tokens, memory)
-        # print("1362 at seq2seq, check cache")
-        # for i in cache:
-        #     print(f"Layer {i} :  cache shape {cache[i].shape}" )
         if cache != None:
             pred, attn, cache = self.model.decode_use_cache(memory, enc_states, cache)
         else:
