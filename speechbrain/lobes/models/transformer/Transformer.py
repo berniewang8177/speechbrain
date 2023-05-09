@@ -782,7 +782,7 @@ class TransformerDecoder(nn.Module):
             self_attns.append(self_attn)
             multihead_attns.append(multihead_attn)
             if cache is not None:
-                cache[idx] = torch.cat([ cache[idx], output.detach()], dim = 1)
+                cache[idx] = torch.cat([ output.detach()], dim = 1)
 
         output = self.norm(output)
 
