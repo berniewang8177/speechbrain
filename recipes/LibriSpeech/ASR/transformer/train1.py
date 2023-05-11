@@ -36,6 +36,7 @@ Authors
 
 import os
 import sys
+import gc
 import torch
 import logging
 from pathlib import Path
@@ -76,8 +77,7 @@ class ASR(sb.core.Brain):
 
         _, audio_max_len, _, _ = src.shape
         _, text_max_len = tokens_bos.shape
-        seg_stats = np.array([audio_max_len, text_max_len ])
-
+        seg_stats = [audio_max_len, text_max_len ]
         enc_out, pred = self.modules.Transformer(
             src, tokens_bos, wav_lens, seg_stats = seg_stats, pad_idx=self.hparams.pad_index,
         )
@@ -175,6 +175,11 @@ class ASR(sb.core.Brain):
         with torch.no_grad():
             predictions = self.compute_forward(batch, stage=stage)
             loss = self.compute_objectives(predictions, batch, stage=stage)
+        
+        gc.collect()
+        torch.cuda.empty_cache()
+        del batch
+
         return loss.detach()
 
     def on_stage_start(self, stage, epoch):
@@ -283,8 +288,13 @@ class ASR(sb.core.Brain):
                 self.zero_grad()
                 self.optimizer_step += 1
                 self.hparams.noam_annealing(self.optimizer)
-
+        
         self.on_fit_batch_end(batch, outputs, loss, should_step)
+        
+        gc.collect()
+        torch.cuda.empty_cache()
+        del batch
+
         return loss.detach().cpu()
 
 

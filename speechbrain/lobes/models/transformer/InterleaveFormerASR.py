@@ -3,7 +3,6 @@ Authors
 * Yiqi Wang, 2022
 * Jianyu Mao, 2022
 """
-from transformers import OpenAIGPTModel
 import torch  # noqa 42
 from torch import nn
 from typing import Optional
@@ -135,8 +134,14 @@ class InterleaveFormerASR(InterleaveFormerInterface):
             NormalizedEmbedding(d_model, tgt_vocab)
         )
 
+        # modality embedding
+        self.modality_emb = nn.Embedding(2, d_model)
+        self.audio = torch.tensor([0]).long()
+        self.text = torch.tensor([1]).long()
         # reset parameters using xavier_normal_ and load weights from pretrained GPT
         self._init_params()
+
+
 
     def forward(self, src, tgt, wave_len, seg_stats, pad_idx=0):
         """
@@ -169,15 +174,14 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         if self.attention_type == "RelPosMHAXL":
             pos_embs_encoder = self.positional_encoding(src)
         elif self.positional_encoding_type == "fixed_abs_sine":
-            src = src + self.positional_encoding(src)  # add the encodings here
+            src = src + self.positional_encoding(src) + self.modality_emb(self.audio)
             pos_embs_encoder = None
-
 
         tgt = self.custom_tgt_module(tgt)
         if self.attention_type == "RelPosMHAXL":
             assert False, f"Don't support RelPosMHAXL yet"
         elif self.positional_encoding_type == "fixed_abs_sine":
-            tgt = tgt + self.positional_encoding(tgt)
+            tgt = tgt + self.positional_encoding(tgt) + self.modality_emb(self.text)
             pos_embs_target = None
             pos_embs_encoder = None
 
@@ -195,7 +199,6 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         
         final_src = torch.cat([encoded_output, tgt], dim = 1)
         final_padding_mask = torch.cat([src_key_padding_mask, tgt_key_padding_mask], dim = 1)
-
         # Decoding 
         decoded_output, _ = self.encoder(
             mode="decode",
@@ -204,7 +207,7 @@ class InterleaveFormerASR(InterleaveFormerInterface):
             src_key_padding_mask=None,
             tgt=tgt,
             tgt_mask=tgt_mask, # this must be a semi-causal mask, hopping style
-            tgt_key_padding_mask=final_key_padding_mask,
+            tgt_key_padding_mask=final_padding_mask,
             pos_embs=pos_embs_encoder,
         )
 

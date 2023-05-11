@@ -296,7 +296,7 @@ class InterleaveFormerLayer(nn.Module):
         src,
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
-        tgt,
+        tgt: Optional[torch.Tensor] = None,
         tgt_mask: Optional[torch.Tensor] = None,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
@@ -314,12 +314,11 @@ class InterleaveFormerLayer(nn.Module):
         src_key_padding_mask : torch.Tensor, optional
             The mask for the src keys for each example in the batch.
         """
-
-        if self.normalize_before:
-            src1 = self.norm1(src)
-        else:
-            src1 = src
-        if mode = 'encode':
+        if mode == 'encode':
+            if self.normalize_before:
+              src1 = self.norm1(src)
+            else:
+              src1 = src
             # audio encoding using self-attention
             residual = src
             output, self_attn = self.self_att(
@@ -331,35 +330,41 @@ class InterleaveFormerLayer(nn.Module):
                 pos_embs=pos_embs,
             )
         else:
+            if self.normalize_before:
+                tgt1 = self.norm1(tgt)
+            else:
+                tgt1 = tgt
             # text decoding via "cross" attetnion
             # query:    text 
             # key/value:audio+text
             residual = tgt
+            # print(f"\nbefore self-attn{tgt.shape} {src.shape} {tgt_mask.shape} {tgt_key_padding_mask.shape}\n")
             output, self_attn = self.self_att(
-                tgt,
+                tgt1,
                 src,
                 src,
                 attn_mask=tgt_mask, # remember it has to be a causal mask now!
                 key_padding_mask=tgt_key_padding_mask, # a key padding that deal with audio/text modality!
                 pos_embs=pos_embs,
+              )
 
         # add & norm
-        src = residual + self.dropout1(output)
+        output = residual + self.dropout1(output)
         if not self.normalize_before:
-            src = self.norm1(src)
+            output = self.norm1(output)
 
         if self.normalize_before:
-            src1 = self.norm2(src)
+            output1 = self.norm2(output)
         else:
-            src1 = src
+            output1 = output
 
         # apply 1 of the 2 modality experts on their own modality using seg_stats
-        if mode = 'encode':
-            output = self.audio_expert(src1)
+        if mode == 'encode':
+            output2 = self.audio_expert(output1)
         else:
-            output = self.text_expert(src1)
+            output2 = self.text_expert(output1)
         # add & norm
-         output = src + self.dropout2(output)
+        output = output + self.dropout2(output2)
         if not self.normalize_before:
             output = self.norm2(output)
 
@@ -442,7 +447,7 @@ class InterleaveFormer(nn.Module):
         src,
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
-        tgt,
+        tgt: Optional[torch.Tensor] = None,
         tgt_mask: Optional[torch.Tensor] = None,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
@@ -460,7 +465,7 @@ class InterleaveFormer(nn.Module):
         src_key_padding_mask : tensor
             The mask for the src keys per batch (optional).
         """
-        output = src
+        output = src if mode == 'encode' else tgt
         if self.layerdrop_prob > 0.0:
             keep_probs = self.rng.random(len(self.layers))
         else:
@@ -474,10 +479,12 @@ class InterleaveFormer(nn.Module):
             ):
                 output, attention = enc_layer(
                     mode,
-                    output,
-                    seg_stats,
+                    output if mode == 'encode' else src,
                     src_mask=src_mask,
                     src_key_padding_mask=src_key_padding_mask,
+                    tgt=tgt if mode == 'encode' else output,
+                    tgt_mask=tgt_mask,
+                    tgt_key_padding_mask=tgt_key_padding_mask,
                     pos_embs=pos_embs,
                 )
 
