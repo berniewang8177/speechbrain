@@ -99,7 +99,7 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         encoder_module: Optional[str] = "InterleaveFormer",
         conformer_activation: Optional[nn.Module] = Swish,
         attention_type: Optional[str] = "regularMHA",
-        max_length: Optional[int] = 512,
+        max_length: Optional[int] = 2500,
         causal: Optional[bool] = True,
     ):
         super().__init__(
@@ -174,14 +174,14 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         if self.attention_type == "RelPosMHAXL":
             pos_embs_encoder = self.positional_encoding(src)
         elif self.positional_encoding_type == "fixed_abs_sine":
-            src = src + self.positional_encoding(src) + self.modality_emb(self.audio)
+            src = src + self.positional_encoding(src) + self.modality_emb(self.audio.to(src.device))
             pos_embs_encoder = None
 
         tgt = self.custom_tgt_module(tgt)
         if self.attention_type == "RelPosMHAXL":
             assert False, f"Don't support RelPosMHAXL yet"
         elif self.positional_encoding_type == "fixed_abs_sine":
-            tgt = tgt + self.positional_encoding(tgt) + self.modality_emb(self.text)
+            tgt = tgt + self.positional_encoding(tgt) + self.modality_emb(self.text.to(tgt.device))
             pos_embs_target = None
             pos_embs_encoder = None
 
