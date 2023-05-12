@@ -334,7 +334,7 @@ class InterleaveFormerLayer(nn.Module):
                 tgt1 = self.norm1(tgt)
             else:
                 tgt1 = tgt
-            # text decoding via "cross" attetnion
+            # text decoding via cross attetnion
             # query:    text 
             # key/value:audio+text
             residual = tgt

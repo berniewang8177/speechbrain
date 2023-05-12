@@ -244,7 +244,7 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         return src_key_padding_mask, tgt_key_padding_mask, src_mask, tgt_mask
 
     @torch.no_grad()
-    def decode(self, tgt, src, wave_len, enc_len=None):
+    def decode(self, tgt, encoder_out, enc_len=None):
         """This method implements a decoding step for the InterleaveFormer model.
         Arguments
         ---------
@@ -256,55 +256,40 @@ class InterleaveFormerASR(InterleaveFormerInterface):
             Not used. 
             The actual length of encoder states.
         """
-        
-        if src.ndim == 4:
-            bz, t, ch1, ch2 = src.shape
-            src = src.reshape(bz, t, ch1 * ch2)
-
-        _, max_audio, _ = src.shape
-        bin_width, max_text, = tgt.shape # bin_width x 1 becaues each time 1 token but consider bin_width # of possibility in beam search
-        seg_stats = [max_audio, max_text]
-
-        (
-            src_key_padding_mask,
-            tgt_key_padding_mask,
-            src_mask,
-            tgt_mask, # this one could be the hopping causal mask! Postponed right now.
-        ) = self.make_masks(src, tgt, wave_len, seg_stats)
-
-        src = self.custom_src_module(src)
-        # add pos encoding to queries if are sinusoidal ones else
-        if self.attention_type == "RelPosMHAXL":
-            pos_embs_encoder = self.positional_encoding(src)
-        elif self.positional_encoding_type == "fixed_abs_sine":
-            src = src + self.positional_encoding(src)  # add the encodings here
-            pos_embs_encoder = None
-
+        # length of audio and text
+        seg_stats=[encoder_out.shape[1], tgt.shape[1]]
+        # make mask 
+        src_key_padding_mask = None
+        if wav_len is not None:
+            abs_len = torch.round(wav_len * src.shape[1])
+            src_key_padding_mask = ~length_to_mask(abs_len).bool()
+        tgt_mask = get_lookahead_hopping_mask(tgt, seg_stats)
+        tgt_key_padding_mask = torch.zeros_like(tgt).bool().to(tgt_mask.device)
+        # embed text with position + modality embedding
         tgt = self.custom_tgt_module(tgt)
         if self.attention_type == "RelPosMHAXL":
-            # we use fixed positional encodings in the decoder
-            assert False, f"Not supported yet"
+            assert False, f"Don't support RelPosMHAXL yet"
         elif self.positional_encoding_type == "fixed_abs_sine":
-            tgt = tgt + self.positional_encoding(tgt)  # add the encodings here
+            tgt = tgt + self.positional_encoding(tgt) + self.modality_emb(self.text.to(tgt.device))
             pos_embs_target = None
             pos_embs_encoder = None
 
-        # souce has batch_size (which is 1) x horizon x feature where tgt is bin_size x horizon
-        # Make them match in the first dimension! 
-        final_src = torch.cat([src.repeat(bin_width,1,1), tgt], dim = 1)
-        # assert False, f"wave: {wave_len} {src_key_padding_mask.shape} {tgt.shape} {tgt_key_padding_mask.shape} {tgt_mask.shape} "
-        final_padding_mask = torch.cat([src_key_padding_mask.repeat(bin_width,1), tgt_key_padding_mask], dim = 1)
-
-        # encoded_output is bi-modality learned representation.
-        encoded_output, attn = self.encoder(
+        final_src = torch.cat([encoded_output, tgt], dim = 1)
+        final_padding_mask = torch.cat([src_key_padding_mask, tgt_key_padding_mask], dim = 1)
+        # Decoding 
+        decoded_output, multihead_attns = self.encoder(
+            mode="decode",
             src=final_src,
-            seg_stats = seg_stats, # used by modality expert
-            src_mask=tgt_mask, # this must be a causal mask, hopping style
-            src_key_padding_mask=final_padding_mask,
+            src_mask=None,
+            src_key_padding_mask=None,
+            tgt=tgt,
+            tgt_mask=tgt_mask, # this must be a semi-causal mask, hopping style
+            tgt_key_padding_mask=final_padding_mask,
             pos_embs=pos_embs_encoder,
         )
-        prediction = encoded_output[:, max_audio: ]
-        return prediction, attn[-1]
+
+        return prediction, multihead_attns[-1]
+
 
     def _init_params(self):
         # Init parameters
