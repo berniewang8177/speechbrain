@@ -687,7 +687,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
 
         return topk_hyps, topk_scores, topk_lengths, topk_log_probs
 
-    def forward(self, enc_states, wav_len):  # noqa: C901
+    def forward(self, enc_states, wav_len, seg_stats=None):  # noqa: C901
         """Applies beamsearch and returns the predicted tokens."""
         enc_lens = torch.round(enc_states.shape[1] * wav_len).int()
         device = enc_states.device
@@ -777,7 +777,7 @@ class S2SBeamSearcher(S2SBaseSearcher):
                 break
             # forward_step will modifed the representation in cache
             log_probs, memory, attn, cache = self.forward_step(
-                inp_tokens, memory, enc_states, enc_lens, cache
+                inp_tokens, memory, enc_states, enc_lens, cache, seg_stats
             )
             log_probs = self.att_weight * log_probs
 
@@ -1356,13 +1356,14 @@ class S2STransformerBeamSearch(S2SBeamSearcher):
         memory = torch.index_select(memory, dim=0, index=index)
         return memory
 
-    def forward_step(self, inp_tokens, memory, enc_states, enc_lens, cache):
+    def forward_step(self, inp_tokens, memory, enc_states, enc_lens, cache, seg_stats=None):
         """Performs a step in the implemented beamsearcher."""
         memory = _update_mem(inp_tokens, memory)
         if cache != None:
-            pred, attn, cache = self.model.decode_use_cache(memory, enc_states, cache)
+            assert seg_stats != None, f"{seg_stats}"
+            pred, attn, cache = self.model.decode_use_cache(memory, enc_states, cache, enc_lens, seg_stats = seg_stats)
         else:
-            assert False, f"F**k, wrong argument maybe?, {cache}"
+            assert False, f"We always use weight caching!"
             pred, attn = self.model.decode(memory, enc_states)
         prob_dist = self.softmax(self.fc(pred) / self.temperature)
         return prob_dist[:, -1, :], memory, attn, cache

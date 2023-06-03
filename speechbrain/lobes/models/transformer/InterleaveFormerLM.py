@@ -12,7 +12,7 @@ from torch import nn
 from speechbrain.nnet.linear import Linear
 from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.nnet.containers import ModuleList
-from speechbrain.lobes.models.transformer.Interleaveformer import (
+from speechbrain.lobes.models.transformer.InterleaveFormer import (
     InterleaveFormerInterface,
     get_lookahead_mask,
     get_key_padding_mask,
@@ -20,7 +20,7 @@ from speechbrain.lobes.models.transformer.Interleaveformer import (
 )
 
 
-class InterleaveformerLM(InterleaveFormerInterface):
+class InterleaveFormerLM(InterleaveFormerInterface):
     """This is an implementation of language model variant of a InterleaveFormer.
 
     Arguments
@@ -123,7 +123,7 @@ class InterleaveformerLM(InterleaveFormerInterface):
             src = self.embedding_proj(src)
         src = src + self.positional_encoding(src)
         if self.num_encoder_layers > 0:
-            encoder_out, _ = self.encoder(
+            encoder_out, last_attn, weight_cache = self.encoder(
                 mode="encode",
                 src=src,
                 src_mask=src_mask,

@@ -1080,7 +1080,7 @@ class Brain:
         ) as t:
             count = 0
             for batch in t:
-                # count += 1
+                count += 1
                 # if count > 4:
                 #     break
                 if self._optimizer_step_limit_exceeded:

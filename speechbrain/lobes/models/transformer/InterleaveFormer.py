@@ -300,6 +300,7 @@ class InterleaveFormerLayer(nn.Module):
         tgt_mask: Optional[torch.Tensor] = None,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
+        cache=None
     ):
         """
         Arguments
@@ -313,6 +314,9 @@ class InterleaveFormerLayer(nn.Module):
             now it actually a TGT_MASK that is passed in, which is a causal mask!
         src_key_padding_mask : torch.Tensor, optional
             The mask for the src keys for each example in the batch.
+        cache: None or Tensor
+            Cached weight from prior decoding step.
+            Dimension: batch x horizon x dim
         """
         if mode == 'encode':
             if self.normalize_before:
@@ -330,6 +334,15 @@ class InterleaveFormerLayer(nn.Module):
                 pos_embs=pos_embs,
             )
         else:
+            # if cache is still empty or cache is None (not weight caching)
+            # normal computation
+            if cache is None or (cache is not None and cache.shape[1] == 0):
+                pass
+            else:
+                # weight caching
+                # query only comes from last timestep
+                tgt = tgt[:,-1:, :]
+
             if self.normalize_before:
                 tgt1 = self.norm1(tgt)
             else:
@@ -338,7 +351,8 @@ class InterleaveFormerLayer(nn.Module):
             # query:    text 
             # key/value:audio+text
             residual = tgt
-            # print(f"\nbefore self-attn{tgt.shape} {src.shape} {tgt_mask.shape} {tgt_key_padding_mask.shape}\n")
+            # if residual.requires_grad == False:
+            #     print(f"\nbefore self-attn{tgt1.shape} {src.shape} {tgt_mask.shape} {tgt_key_padding_mask.shape}\n")
             output, self_attn = self.self_att(
                 tgt1,
                 src,
@@ -367,6 +381,10 @@ class InterleaveFormerLayer(nn.Module):
         output = output + self.dropout2(output2)
         if not self.normalize_before:
             output = self.norm2(output)
+        
+         # during decoding, update the result with cache
+        if cache is not None:
+            output = torch.cat([cache, output], dim = 1)
 
         return output, self_attn
 
@@ -451,6 +469,7 @@ class InterleaveFormer(nn.Module):
         tgt_mask: Optional[torch.Tensor] = None,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
+        cache=None
     ):
         """
         Arguments
@@ -464,6 +483,8 @@ class InterleaveFormer(nn.Module):
             now it actually a TGT_MASK that is passed in, which is a causal mask!
         src_key_padding_mask : tensor
             The mask for the src keys per batch (optional).
+        cache: Dictionary of tensor
+            layer: batch x horizon x dim
         """
         output = src if mode == 'encode' else tgt
         if self.layerdrop_prob > 0.0:
@@ -486,11 +507,13 @@ class InterleaveFormer(nn.Module):
                     tgt_mask=tgt_mask,
                     tgt_key_padding_mask=tgt_key_padding_mask,
                     pos_embs=pos_embs,
+                    cache=None if cache is None else cache[i],
                 )
-
                 attention_lst.append(attention)
+                if cache is not None:
+                    cache[i] = torch.cat([ output.detach()], dim = 1)
         output = self.norm(output)
-        return output, attention_lst
+        return output, attention_lst, cache
 
 
 
@@ -611,9 +634,7 @@ def get_lookahead_hopping_mask(padded_input, seg_stats):
             [0., 0., 0., 0., 0.],]
             )
     """
-    # NOT implemented YET!
     # pleaes follow get_lookahead_mask(padded_input) style
-    assert padded_input.shape[1] == seg_stats[1]
     max_audio, max_text = seg_stats
     inf = float( 'inf')
     tgt_mask = torch.tensor( - inf).repeat(max_text,max_text)

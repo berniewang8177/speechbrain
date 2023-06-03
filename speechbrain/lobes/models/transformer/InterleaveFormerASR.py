@@ -140,8 +140,9 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         self.text = torch.tensor([1]).long()
         # reset parameters using xavier_normal_ and load weights from pretrained GPT
         self._init_params()
-
-
+        # layers to decode is the encoder layers (decoder layers is 0)
+        self.decode_layers = num_encoder_layers
+        self.decode_dim = d_model
 
     def forward(self, src, tgt, wave_len, seg_stats, pad_idx=0):
         """
@@ -153,6 +154,8 @@ class InterleaveFormerASR(InterleaveFormerInterface):
             The sequence to the decoder.
         wave_len: torch.Tensor, optional
             Torch Tensor of shape (batch, ) containing the relative length to padded length for each example.
+        seg_stats : list
+            has audio and text length
         pad_idx : int, optional
             The index for <pad> token (default=0).
         """
@@ -186,7 +189,7 @@ class InterleaveFormerASR(InterleaveFormerInterface):
             pos_embs_encoder = None
 
         # first encoder audio
-        encoded_output, _ = self.encoder(
+        encoded_output, _, _ = self.encoder(
             mode="encode",
             src=src,
             src_mask=src_mask, # should be None
@@ -199,8 +202,9 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         
         final_src = torch.cat([encoded_output, tgt], dim = 1)
         final_padding_mask = torch.cat([src_key_padding_mask, tgt_key_padding_mask], dim = 1)
+
         # Decoding 
-        decoded_output, _ = self.encoder(
+        decoded_output, _, _ = self.encoder(
             mode="decode",
             src=final_src,
             src_mask=None,
@@ -244,40 +248,50 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         return src_key_padding_mask, tgt_key_padding_mask, src_mask, tgt_mask
 
     @torch.no_grad()
-    def decode(self, tgt, encoder_out, enc_len=None):
-        """This method implements a decoding step for the InterleaveFormer model.
+    def decode_use_cache(self, tgt, encoder_out, cache, enc_len=None, seg_stats=None):
+        """This method implements a decoding step for the transformer model.
+        It use weight_caching to improve decoding speed.
         Arguments
         ---------
         tgt : torch.Tensor
             The sequence to the decoder.
-        src : torch.Tensor
-            Raw audio instead of encoded audio.
+        encoder_out : torch.Tensor
+            Hidden output of the encoder.
+        cache : Dictionary of torch.Tensor
+            Cached weight for previous decoding step. A dictionry where key is layer index
+            Each value of the dictionry is 3d tensor: batch x horizon x dim 
         enc_len : torch.LongTensor
-            Not used. 
             The actual length of encoder states.
+        seg_stats : list
+            has audio and text length
         """
-        # length of audio and text
-        seg_stats=[encoder_out.shape[1], tgt.shape[1]]
-        # make mask 
+        # text length  == latest token
+        seg_stats[1] = 1
+        # With weight caching, no need for a mask.
+        tgt_mask = None
+        # tgt_mask = get_lookahead_hopping_mask(tgt[:, -1:], seg_stats)
+        # print("\n\nCreate tgt mask:", tgt_mask.shape, end="\n\n")
         src_key_padding_mask = None
-        if wav_len is not None:
-            abs_len = torch.round(wav_len * src.shape[1])
-            src_key_padding_mask = ~length_to_mask(abs_len).bool()
-        tgt_mask = get_lookahead_hopping_mask(tgt, seg_stats)
-        tgt_key_padding_mask = torch.zeros_like(tgt).bool().to(tgt_mask.device)
-        # embed text with position + modality embedding
+        if enc_len is not None:
+            src_key_padding_mask = (1 - length_to_mask(enc_len)).bool()
+        tgt_key_padding_mask = torch.zeros_like(tgt, device=tgt.device).bool()
         tgt = self.custom_tgt_module(tgt)
+        
         if self.attention_type == "RelPosMHAXL":
-            assert False, f"Don't support RelPosMHAXL yet"
+            # use standard sinusoidal pos encoding in decoder
+            tgt = tgt + self.positional_encoding_decoder(tgt) + self.modality_emb(self.text.to(tgt.device))
+            pos_embs_encoder = None  # self.positional_encoding(src)
+            pos_embs_target = None
         elif self.positional_encoding_type == "fixed_abs_sine":
-            tgt = tgt + self.positional_encoding(tgt) + self.modality_emb(self.text.to(tgt.device))
+            tgt = tgt + self.positional_encoding(tgt) + + self.modality_emb(self.text.to(tgt.device))
             pos_embs_target = None
             pos_embs_encoder = None
 
-        final_src = torch.cat([encoded_output, tgt], dim = 1)
+        final_src = torch.cat([encoder_out, tgt], dim = 1)
+        # assert False, f"{src_key_padding_mask.shape} {tgt_key_padding_mask.shape}"
         final_padding_mask = torch.cat([src_key_padding_mask, tgt_key_padding_mask], dim = 1)
         # Decoding 
-        decoded_output, multihead_attns = self.encoder(
+        decoded_output, multihead_attns, cache = self.encoder(
             mode="decode",
             src=final_src,
             src_mask=None,
@@ -286,9 +300,57 @@ class InterleaveFormerASR(InterleaveFormerInterface):
             tgt_mask=tgt_mask, # this must be a semi-causal mask, hopping style
             tgt_key_padding_mask=final_padding_mask,
             pos_embs=pos_embs_encoder,
+            cache = cache
         )
 
-        return prediction, multihead_attns[-1]
+        return decoded_output, multihead_attns[-1], cache
+    
+    # @torch.no_grad()
+    # def decode(self, tgt, encoder_out, enc_len=None):
+    #     """This method implements a decoding step for the InterleaveFormer model.
+    #     Arguments
+    #     ---------
+    #     tgt : torch.Tensor
+    #         The sequence to the decoder.
+    #     src : torch.Tensor
+    #         Raw audio instead of encoded audio.
+    #     enc_len : torch.LongTensor
+    #         Not used. 
+    #         The actual length of encoder states.
+    #     """
+    #     # length of audio and latest text token)
+    #     seg_stats=[encoder_out.shape[1], 1]
+    #     # make mask 
+    #     src_key_padding_mask = None
+    #     if wav_len is not None:
+    #         abs_len = torch.round(wav_len * src.shape[1])
+    #         src_key_padding_mask = ~length_to_mask(abs_len).bool()
+    #     tgt_mask = get_lookahead_hopping_mask(tgt, seg_stats)
+    #     tgt_key_padding_mask = torch.zeros_like(tgt).bool().to(tgt_mask.device)
+    #     # embed text with position + modality embedding
+    #     tgt = self.custom_tgt_module(tgt)
+    #     if self.attention_type == "RelPosMHAXL":
+    #         assert False, f"Don't support RelPosMHAXL yet"
+    #     elif self.positional_encoding_type == "fixed_abs_sine":
+    #         tgt = tgt + self.positional_encoding(tgt) + self.modality_emb(self.text.to(tgt.device))
+    #         pos_embs_target = None
+    #         pos_embs_encoder = None
+
+    #     final_src = torch.cat([encoded_output, tgt], dim = 1)
+    #     final_padding_mask = torch.cat([src_key_padding_mask, tgt_key_padding_mask], dim = 1)
+    #     # Decoding 
+    #     decoded_output, multihead_attns = self.encoder(
+    #         mode="decode",
+    #         src=final_src,
+    #         src_mask=None,
+    #         src_key_padding_mask=None,
+    #         tgt=tgt,
+    #         tgt_mask=tgt_mask, # this must be a semi-causal mask, hopping style
+    #         tgt_key_padding_mask=final_padding_mask,
+    #         pos_embs=pos_embs_encoder,
+    #     )
+
+    #     return prediction, multihead_attns[-1]
 
 
     def _init_params(self):

@@ -572,6 +572,7 @@ class Checkpointer:
         )
         saved_paramfiles = {}
         for name, obj in self.recoverables.items():
+            # print(f"Checkpoint item {obj}")
             objfname = f"{name}" + PARAMFILE_EXT
             savepath = ckpt_dir / objfname
             saved_paramfiles[name] = savepath
