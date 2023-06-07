@@ -358,3 +358,22 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         for p in self.parameters():
             if p.dim() > 1:
                 torch.nn.init.xavier_normal_(p)
+
+    def _init_params_with_LM(self):
+        # Init parameters
+        ref_model = InterleaveFormerLM(5000)
+        ref_model.load_state_dict(torch.load("/content/model.ckpt", map_location=torch.device('cuda:0')))
+        state_dict = self.state_dict()
+        for p in self.parameters():
+            if p.dim() > 1:
+                torch.nn.init.xavier_normal_(p)
+
+        for param_key in self.state_dict():
+            
+            if "text_expert" in param_key:
+                state_dict[param_key] = ref_model.state_dict()[param_key.replace('text', 'audio')]
+            else:
+                try:
+                    state_dict[param_key] = ref_model.state_dict()[param_key]
+                except:
+                    print("Oops, got a unexpected param:", param_key )
