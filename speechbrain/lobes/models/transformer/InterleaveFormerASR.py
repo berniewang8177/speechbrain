@@ -362,14 +362,18 @@ class InterleaveFormerASR(InterleaveFormerInterface):
     def _init_params_with_LM(self):
         # Init parameters
         ref_model = InterleaveFormerLM(5000)
+        # load the trained LM
         ref_model.load_state_dict(torch.load("/content/model.ckpt", map_location=torch.device('cuda:0')))
+        # ASR weights
         state_dict = self.state_dict()
+        # initialization
         for p in self.parameters():
             if p.dim() > 1:
                 torch.nn.init.xavier_normal_(p)
-
+        # ovewrite model weight
         for param_key in self.state_dict():
-            
+            # LM only have "audio expert" trained
+            # Initialize ASR's text epxert with LM's audio expert.
             if "text_expert" in param_key:
                 state_dict[param_key] = ref_model.state_dict()[param_key.replace('text', 'audio')]
             else:
