@@ -370,7 +370,7 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         for p in self.parameters():
             if p.dim() > 1:
                 torch.nn.init.xavier_normal_(p)
-        # ovewrite model weight
+        # collect ref model weight
         for param_key in self.state_dict():
             # LM only have "audio expert" trained
             # Initialize ASR's text epxert with LM's audio expert.
@@ -381,3 +381,5 @@ class InterleaveFormerASR(InterleaveFormerInterface):
                     state_dict[param_key] = ref_model.state_dict()[param_key]
                 except:
                     print("Oops, got a unexpected param:", param_key )
+        # overwrite weight
+        self.load_state_dict(state_dict=state_dict)
