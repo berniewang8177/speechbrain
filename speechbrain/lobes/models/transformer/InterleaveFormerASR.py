@@ -3,12 +3,14 @@ Authors
 * Yiqi Wang, 2022
 * Jianyu Mao, 2022
 """
+import copy
 import torch  # noqa 42
 from torch import nn
 from typing import Optional
 import re
 from speechbrain.nnet.linear import Linear
 from speechbrain.nnet.containers import ModuleList
+from speechbrain.lobes.models.transformer.InterleaveFormerLM import InterleaveFormerLM
 from speechbrain.lobes.models.transformer.InterleaveFormer import (
     InterleaveFormerInterface,
     get_lookahead_mask,
@@ -101,6 +103,8 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         attention_type: Optional[str] = "regularMHA",
         max_length: Optional[int] = 2500,
         causal: Optional[bool] = True,
+        init_path: Optional[str] = "", 
+        audio_expert_init_path: Optional[str] = "", 
     ):
         super().__init__(
             d_model=d_model,
@@ -139,7 +143,14 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         self.audio = torch.tensor([0]).long()
         self.text = torch.tensor([1]).long()
         # reset parameters using xavier_normal_ and load weights from pretrained GPT
-        self._init_params()
+        if len(init_path) > 1:
+            print("\n\nLM init\n\n")
+            if len(audio_expert_init_path) < 1:
+                audio_expert_init_path = None
+            self._init_params_with_LM(init_path, audio_expert_init_path)
+        else:
+            print("\n\nNormal init\n\n")
+            self._init_params()
         # layers to decode is the encoder layers (decoder layers is 0)
         self.decode_layers = num_encoder_layers
         self.decode_dim = d_model
@@ -358,28 +369,63 @@ class InterleaveFormerASR(InterleaveFormerInterface):
         for p in self.parameters():
             if p.dim() > 1:
                 torch.nn.init.xavier_normal_(p)
+        
+        # set audio expert parameters to trainable, 
+        # all other layers in transformer frozen
+        print("\nComment out me and below to make everyone except audio_expert unfrozen!\n")
+        for name, p in self.named_parameters():
+            if 'encoder' in name and 'audio_expert' not in name:
+                p.requires_grad = False
 
-    def _init_params_with_LM(self):
+    def _init_params_with_LM(self, init_path, audio_expert = None):
         # Init parameters
         ref_model = InterleaveFormerLM(5000)
         # load the trained LM
-        ref_model.load_state_dict(torch.load("/content/model.ckpt", map_location=torch.device('cuda:0')))
+        # FIX ME, why cuda:0? does it matter?
+        ref_model.load_state_dict(torch.load(init_path, map_location=torch.device('cuda:0')))
+        if audio_expert is not None:
+            print("Load audiod checkpoint from ", audio_expert)
+            audio_checkpoint = torch.load(audio_expert, map_location=torch.device('cuda:0'))
         # ASR weights
         state_dict = self.state_dict()
         # initialization
         for p in self.parameters():
             if p.dim() > 1:
                 torch.nn.init.xavier_normal_(p)
+        
         # collect ref model weight
+        count = 0
         for param_key in self.state_dict():
+            count += 1
             # LM only have "audio expert" trained
             # Initialize ASR's text epxert with LM's audio expert.
             if "text_expert" in param_key:
+                # LM init text expert is not trained ,use audio expert.
                 state_dict[param_key] = ref_model.state_dict()[param_key.replace('text', 'audio')]
+            elif "audio_expert" in param_key:
+                # try to init the audio expert with audio_expert separtely trained
+                if audio_expert is not None:
+                    _check_key = "1." + param_key
+                    state_dict[param_key] = audio_checkpoint[_check_key]
+                    print("Init model audio expert with ref key:", _check_key)
+                else:
+                    # random init audio expert if not path provided
+                    pass
             else:
                 try:
                     state_dict[param_key] = ref_model.state_dict()[param_key]
                 except:
-                    print("Oops, got a unexpected param:", param_key )
+                    print("Skip a different param:", param_key, state_dict[param_key].shape)
+        
         # overwrite weight
         self.load_state_dict(state_dict=state_dict)
+        del ref_model
+
+        # set audio expert parameters to trainable, all other layers in transformer frozen
+
+        print("\n\nExcept audio expert, everything is UNTRAINABLE\n\n")
+
+        for name, p in self.named_parameters():
+            if 'encoder' in name and 'audio_expert' not in name:
+                p.requires_grad = False
+        

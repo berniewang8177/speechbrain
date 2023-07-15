@@ -21,6 +21,7 @@ import argparse
 import tempfile
 import warnings
 from contextlib import contextmanager
+import wandb
 import speechbrain as sb
 from datetime import date
 from enum import Enum, auto
@@ -453,11 +454,12 @@ class Brain:
         run_opts=None,
         checkpointer=None,
         profiler=None,
+        log_to_wandb=False,
     ):
         self.opt_class = opt_class
         self.checkpointer = checkpointer
         self.profiler = profiler
-
+        self.log_to_wandb = log_to_wandb
         # Arguments passed via the run opts dictionary
         run_opt_defaults = {
             "debug": False,
@@ -542,7 +544,8 @@ class Brain:
 
         # Put modules on the right device, accessible with dot notation
         self.modules = torch.nn.ModuleDict(modules).to(self.device)
-
+        if self.log_to_wandb:
+            wandb.watch(self.modules.Transformer, log_freq=60)
         # Make hyperparams available with dot notation too
         if hparams is not None:
             self.hparams = SimpleNamespace(**hparams)

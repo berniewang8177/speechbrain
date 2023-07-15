@@ -11,11 +11,11 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/100h_interleaveformer_1.9kwarm/<seed>
+output_folder: !ref results/LMinit_Frozen_all_Except_Audio_100h_interleaveformer_with_lm_init_5kwarm_6-22/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
-
+wandb_log: False
 # Language model (LM) pretraining
 # NB: To avoid mismatch, the speech recognizer must be trained with the same
 # tokenizer used for LM training. Here, we download everything from the
@@ -47,7 +47,7 @@ ckpt_interval_minutes: 30 # save checkpoint every N min
 # The global batch size is computed as batch_size * n_gpus * gradient_accumulation.
 # Empirically, we found that this value should be >= 128.
 # Please, set your parameters accordingly.
-number_of_epochs: 60
+number_of_epochs: 100 # 
 batch_size: 24 # 16G for 24
 ctc_weight: 0.3
 grad_accumulation_factor: 2
@@ -112,7 +112,7 @@ eos_index: 2
 # Decoding parameters
 min_decode_ratio: 0.0
 max_decode_ratio: 1.0
-valid_search_interval: 10
+valid_search_interval: 60
 valid_beam_size: 10
 test_beam_size: 66
 lm_weight: 0.60
@@ -143,6 +143,10 @@ Transformer: !new:speechbrain.lobes.models.transformer.InterleaveFormerASR.Inter
     attention_type: regularMHA
     normalize_before: True
     causal: False
+    init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/model-6-22.ckpt"
+    audio_expert_init_path: ""
+    # audio_expert_init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/audio_expert/lm-init-model.ckpt"
+    # init_path: ""
 
 # This is the TransformerLM that is used according to the Huggingface repository
 # Visit the HuggingFace model corresponding to the pretrained_lm_tokenizer_path
@@ -233,7 +237,7 @@ seq_cost: !name:speechbrain.nnet.losses.kldiv_loss
 
 noam_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr_adam>
-    n_warmup_steps: 1900
+    n_warmup_steps: 5000 # 1900, 3k seems the best
 
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>
