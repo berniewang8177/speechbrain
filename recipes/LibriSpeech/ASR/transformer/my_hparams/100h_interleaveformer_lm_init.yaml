@@ -11,7 +11,7 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/Train_audio_5kwarm_then_LM_init_100h_interleaveformer_3kwarm_6-13/<seed>
+output_folder: !ref results/Loading_positional_emb_test/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt

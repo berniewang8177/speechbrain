@@ -87,20 +87,22 @@ class InterleaveFormerLM(InterleaveFormerInterface):
         self.d_embedding = d_embedding
         if d_embedding is None:
             self.d_embedding = d_model
-
-        self.custom_src_module = NormalizedEmbedding(self.d_embedding, vocab)
+        # assert False, f"{self.d_embedding} {vocab} {d_model}"
+        # self.custom_src_module = NormalizedEmbedding(self.d_embedding, vocab)
+        self.custom_src_module = NormalizedEmbedding(self.d_model, vocab)
 
         self.embedding_proj = None
-        if d_embedding is not None:
-            self.embedding_proj = Linear(
-                input_size=self.d_embedding, n_neurons=d_model
-            )
+        # if d_embedding is not None:
+        #     self.embedding_proj = Linear(
+        #         input_size=self.d_embedding, n_neurons=d_model
+        #     )
 
-        self.output_proj = ModuleList(
-            Linear(input_size=d_model, n_neurons=d_model),
-            LayerNorm(d_model, eps=1e-6),
-            Linear(input_size=d_model, n_neurons=vocab),
-        )
+        # I had moved this to the training loop
+        # self.output_proj = ModuleList(
+        #     Linear(input_size=d_model, n_neurons=d_model),
+        #     LayerNorm(d_model, eps=1e-6),
+        #     Linear(input_size=d_model, n_neurons=vocab),
+        # )
 
         self.num_encoder_layers = num_encoder_layers
         self.num_decoder_layers = num_decoder_layers
@@ -130,8 +132,9 @@ class InterleaveFormerLM(InterleaveFormerInterface):
                 src_key_padding_mask=src_key_padding_mask,
             )
 
-        pred = self.output_proj(encoder_out)
-        return pred
+        return encoder_out
+        # pred = self.output_proj(encoder_out)
+        # return pred
 
     def _reset_params(self):
         for p in self.parameters():

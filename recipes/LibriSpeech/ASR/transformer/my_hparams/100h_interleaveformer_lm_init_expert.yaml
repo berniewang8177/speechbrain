@@ -11,7 +11,7 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/LMinit_Frozen_all_Except_Audio_100h_interleaveformer_with_lm_init_5kwarm_6-22/<seed>
+output_folder: !ref results/Random_init_Frozen_all_100h_interleaveformer_with_lm_init_5kwarm_6-22/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -143,10 +143,11 @@ Transformer: !new:speechbrain.lobes.models.transformer.InterleaveFormerASR.Inter
     attention_type: regularMHA
     normalize_before: True
     causal: False
-    init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/model-6-22.ckpt"
+    init_path: ""
     audio_expert_init_path: ""
     # audio_expert_init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/audio_expert/lm-init-model.ckpt"
     # init_path: ""
+    # init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/model-6-22.ckpt"
 
 # This is the TransformerLM that is used according to the Huggingface repository
 # Visit the HuggingFace model corresponding to the pretrained_lm_tokenizer_path

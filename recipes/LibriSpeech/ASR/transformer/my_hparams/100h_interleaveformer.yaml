@@ -11,7 +11,7 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/100h_interleaveformer_1.9kwarm/<seed>
+output_folder: !ref results/100h_interleaveformer_3kwarm/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -233,7 +233,7 @@ seq_cost: !name:speechbrain.nnet.losses.kldiv_loss
 
 noam_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr_adam>
-    n_warmup_steps: 1900
+    n_warmup_steps: 3000
 
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>
