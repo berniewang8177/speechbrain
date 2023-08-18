@@ -52,21 +52,21 @@ import wandb
 
 logger = logging.getLogger(__name__)
 
-class Stage(Enum):
-    """Simple enum to track stage of experiments."""
+# class Stage(Enum):
+#     """Simple enum to track stage of experiments."""
 
-    TRAIN = auto()
-    VALID = auto()
-    TEST = auto()
+#     TRAIN = auto()
+#     VALID = auto()
+#     TEST = auto()
 
 # Define training procedure
 class ASR(sb.core.Brain):
 
-    def _fit_train(self, train_set, epoch, enable):
+    def _fit_train(self, train_set, epoch, enable, shift = False):
         # train_set here is list: [ asr_dataset, lm_dataset]
 
         # Training stage
-        self.on_stage_start(Stage.TRAIN, epoch)
+        self.on_stage_start(sb.Stage.TRAIN, epoch)
         self.modules.train()
         self.zero_grad()
 
@@ -93,15 +93,19 @@ class ASR(sb.core.Brain):
         ) as t:
             count = 0
             for asr_batch in t:
+                count += 1
                 if self._optimizer_step_limit_exceeded:
                     logger.info("Train iteration limit exceeded")
                     break
                 self.step += 1
-
-                # How much we learn from LM depends on asr 
-                lm_batch = next(iter(train_set[1]))
-      
-                batch = [ asr_batch, lm_batch ]
+                
+                # If true, change to ASC training instead of co-train
+                if shift:
+                    batch = asr_batch
+                else:
+                    # How much we learn from LM depends on asr 
+                    lm_batch = next(iter(train_set[1]))
+                    batch = [ asr_batch, lm_batch ]
                 
                 loss, asr_loss, lm_loss = self.fit_batch(batch)
                 self.avg_train_loss = self.update_average(
@@ -141,9 +145,11 @@ class ASR(sb.core.Brain):
 
         # Run train "on_stage_end" on all processes
         self.zero_grad(set_to_none=True)  # flush gradients
-        self.on_stage_end(Stage.TRAIN, self.avg_train_loss, asr_losses, lm_losses, epoch)
+        self.on_stage_end(sb.Stage.TRAIN, self.avg_train_loss, epoch, asr_losses, lm_losses, )
         self.avg_train_loss = 0.0
         self.step = 0
+
+        return lm_losses
 
     def fit(
         self,
@@ -224,8 +230,12 @@ class ASR(sb.core.Brain):
         enable = progressbar and sb.utils.distributed.if_main_process()
 
         # Iterate epochs
+        # whether shift from co-train to ASR training
+        shift = False
         for epoch in epoch_counter:
-            self._fit_train(train_set=train_set, epoch=epoch, enable=enable)
+            lm_loss = self._fit_train(train_set=train_set, epoch=epoch, enable=enable, shift = shift)
+            if lm_loss <= 3 or epoch >=6:
+                shift = True
             self._fit_valid(valid_set=valid_set, epoch=epoch, enable=enable)
 
             # Debug mode only runs a few epochs
@@ -239,22 +249,28 @@ class ASR(sb.core.Brain):
     def compute_forward(self, batch, stage):
         
         """Forward computations from the waveform batches to the output probabilities."""
-        asr_batch = batch[0].to(self.device)
-        lm_batch = batch[1].to(self.device)
-
+        if type(batch) == list:
+            # co-training
+            asr_batch = batch[0].to(self.device)
+            lm_batch = batch[1].to(self.device)
+            lm_tokens_bos, _ = lm_batch.tokens_bos
+        else:
+            asr_batch = batch.to(self.device)
         asr_tokens_bos, _ = asr_batch.tokens_bos
-        lm_tokens_bos, _ = lm_batch.tokens_bos
 
         if hasattr(self.hparams, "train_mode"):
             mode = self.hparams.train_mode
-            if mode == 0 or mode == 2:
+            # we only do text forward during training
+            if ( (mode == 0 or mode == 2) and stage == sb.Stage.TRAIN ) and type(batch) == list:
                 lm_pred = self.hparams.Transformer.lm_forward(lm_tokens_bos)
-                # output layer for seq2seq log-probabilities
+                # # output layer for seq2seq log-probabilities
                 pred = self.modules.seq_lin(lm_pred)
                 p_seq_lm = self.hparams.log_softmax(pred)
                 p_ctc = None
                 wav_lens = None
-                # print('LM batch:', lm_tokens_bos.shape)
+            else:
+                p_seq_lm = None
+
             if mode == 2:
                 ################## ASR objective ###############
                 wavs, wav_lens = asr_batch.sig
@@ -388,20 +404,15 @@ class ASR(sb.core.Brain):
 
     def evaluate_batch(self, batch, stage):
         """Computations needed for validation/test batches"""
-        assert False, f"I haven't been implemented"
-        # with torch.no_grad():
-        #     predictions = self.compute_forward(batch, stage=stage)
-        #     if predictions[0] != None:
-        #         # ASR Losses are excluded from mixed precision to avoid instabilities
-        #         ars_predictions = ( predictions[0], predictions[1][0], predictions[2], predictions[3], )
-        #         loss = self.compute_objectives(predictions, batch, state = stage)
-        #     else:
-        #         # LM loss, use 
-        #         loss = self.compute_lm_objectives(predictions[1], batch, stage)
+        with torch.no_grad():
+            predictions = self.compute_forward(batch, stage=stage)
+            # ASR Losses are excluded from mixed precision to avoid instabilities
+            asr_predictions = ( predictions[0], predictions[1][0], predictions[2], predictions[3], )
+            loss = self.compute_objectives(asr_predictions, batch, stage = stage)
         
-        # gc.collect()
-        # torch.cuda.empty_cache()
-        # del batch
+        gc.collect()
+        torch.cuda.empty_cache()
+        del batch
 
         return loss.detach()
 
@@ -411,13 +422,15 @@ class ASR(sb.core.Brain):
             self.acc_metric = self.hparams.acc_computer()
             self.wer_metric = self.hparams.error_rate_computer()
 
-    def on_stage_end(self, stage, stage_loss, asr_loss, lm_loss, epoch):
+    def on_stage_end(self, stage, stage_loss,  epoch, asr_loss = 0, lm_loss = 0):
         """Gets called at the end of a epoch."""
         # Compute/store important stats
-        stage_stats = {"loss": stage_loss, "asr_loss": asr_loss, "lm_loss": lm_loss}
+        
         if stage == sb.Stage.TRAIN:
+            stage_stats = {"loss": stage_loss, "asr_loss": asr_loss, "lm_loss": lm_loss}
             self.train_stats = stage_stats
         else:
+            stage_stats = {"loss": stage_loss}
             stage_stats["ACC"] = self.acc_metric.summarize()
             current_epoch = self.hparams.epoch_counter.current
             valid_search_interval = self.hparams.valid_search_interval
@@ -474,14 +487,23 @@ class ASR(sb.core.Brain):
         # Managing automatic mixed precision
         if self.auto_mix_prec:
             with torch.autocast(torch.device(self.device).type):
+
                 outputs = self.compute_forward(batch, sb.Stage.TRAIN)
             
             if len(outputs) == 4:
+
                  # ASR losses 
                 asr_outputs = ( outputs[0], outputs[1][0], outputs[2], outputs[3], )
-                asr_loss = self.compute_objectives(asr_outputs, batch[0], sb.Stage.TRAIN)
+                if type(batch) == list:
+                    asr_loss = self.compute_objectives(asr_outputs, batch[0], sb.Stage.TRAIN)
+                else:
+                    asr_loss = self.compute_objectives(asr_outputs, batch, sb.Stage.TRAIN)
                 # LM losses
-                lm_loss = self.compute_lm_objectives(outputs[1][1], batch[1], sb.Stage.TRAIN)
+                if outputs[1][1] != None:
+                    lm_loss = self.compute_lm_objectives(outputs[1][1], batch[1], sb.Stage.TRAIN)
+                else:
+                    lm_loss = torch.tensor(0)
+                
                 loss = asr_loss + lm_loss
             else:
                 assert False, f"Output shape must be len 2, with asr and lm result"
@@ -509,6 +531,7 @@ class ASR(sb.core.Brain):
         del batch
 
         return loss.detach().cpu(), asr_loss.detach().cpu(), lm_loss.detach().cpu()
+        # return loss.detach().cpu(), asr_loss.detach().cpu(), 0
 
 
 def dataio_prepare(hparams):
