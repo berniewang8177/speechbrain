@@ -93,7 +93,10 @@ def prepare_librispeech(
     if mode == 0:
         # training files are LM files
         tr_splits = lm_splits 
+<<<<<<< HEAD
 
+=======
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
     if mode == 2:
         tr_splits += lm_splits 
         tr_splits = list(set(tr_splits))
@@ -112,18 +115,27 @@ def prepare_librispeech(
 
     save_opt = os.path.join(save_folder, OPT_FILE)
 
+<<<<<<< HEAD
     if sum( ['wiki' in x for x in splits]) == 0:
         # Additional checks to make sure the data folder contains Librispeech
         check_librispeech_folders(data_folder, splits)
     else:
         # wiki-103 don't check
         pass
+=======
+    # Additional checks to make sure the data folder contains Librispeech
+    check_librispeech_folders(data_folder, splits)
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
     # create csv file symbolic link for files
     for idx, split_name in enumerate(splits):
         # only ASR or Co-training need test files
         if mode == 0  and 'test' in split_name:
             continue
+<<<<<<< HEAD
+=======
+
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
         src_path = os.path.join( CSV_PATH, split_name + '.csv' )
         dst_path = os.path.join( save_folder, split_name + '.csv' )
         

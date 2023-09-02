@@ -11,7 +11,11 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
+<<<<<<< HEAD
 output_folder: !ref results/CoTraining_after_asr_seq100losss_no_pretrain_960h_3k_warmup_stop_0.5loss/<seed>
+=======
+output_folder: !ref results/CoTraining_no_pretrain_960h_3k_warmup_stop_3loss_6epoch /<seed>
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt

@@ -62,7 +62,11 @@ logger = logging.getLogger(__name__)
 # Define training procedure
 class ASR(sb.core.Brain):
 
+<<<<<<< HEAD
     def _fit_train(self, train_set, epoch, enable, cotrain = False, lm_scale = 0):
+=======
+    def _fit_train(self, train_set, epoch, enable, shift = False):
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
         # train_set here is list: [ asr_dataset, lm_dataset]
 
         # Training stage
@@ -73,7 +77,10 @@ class ASR(sb.core.Brain):
         # these two aren't saved as self.avg_train_loss
         asr_losses = 0
         lm_losses = 0
+<<<<<<< HEAD
         seq_losses = 0
+=======
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
         # Reset nonfinite count to 0 each epoch
         self.nonfinite_count = 0
@@ -101,25 +108,40 @@ class ASR(sb.core.Brain):
                 self.step += 1
                 
                 # If true, change to ASC training instead of co-train
+<<<<<<< HEAD
                 if cotrain == False:
+=======
+                if shift:
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
                     batch = asr_batch
                 else:
                     # How much we learn from LM depends on asr 
                     lm_batch = next(iter(train_set[1]))
                     batch = [ asr_batch, lm_batch ]
                 
+<<<<<<< HEAD
                 loss, asr_loss, lm_loss, seq_loss = self.fit_batch(batch, lm_scale = lm_scale)
                 self.avg_train_loss = self.update_average(
                     loss, self.avg_train_loss
                 )
                 t.set_postfix(train_loss=self.avg_train_loss, asr_loss=asr_losses, seq_loss=seq_losses, scaled_lm_loss=lm_losses * lm_scale, lm_scale=lm_scale)
+=======
+                loss, asr_loss, lm_loss = self.fit_batch(batch)
+                self.avg_train_loss = self.update_average(
+                    loss, self.avg_train_loss
+                )
+                t.set_postfix(train_loss=self.avg_train_loss, lm_loss=lm_losses, asr_loss=asr_losses)
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
                 asr_losses = self.update_average(
                     asr_loss, asr_losses)
                 lm_losses = self.update_average(
                     lm_loss, lm_losses)
+<<<<<<< HEAD
                 seq_losses = self.update_average(
                     seq_loss, seq_losses)
+=======
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
                 # Profile only if desired (steps allow the profiler to know when all is warmed up)
                 if self.profiler is not None:
@@ -148,11 +170,19 @@ class ASR(sb.core.Brain):
 
         # Run train "on_stage_end" on all processes
         self.zero_grad(set_to_none=True)  # flush gradients
+<<<<<<< HEAD
         self.on_stage_end(sb.Stage.TRAIN, self.avg_train_loss, epoch, asr_losses, lm_losses, seq_losses)
         self.avg_train_loss = 0.0
         self.step = 0
 
         return lm_losses, seq_losses
+=======
+        self.on_stage_end(sb.Stage.TRAIN, self.avg_train_loss, epoch, asr_losses, lm_losses, )
+        self.avg_train_loss = 0.0
+        self.step = 0
+
+        return lm_losses
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
     def fit(
         self,
@@ -233,6 +263,7 @@ class ASR(sb.core.Brain):
         enable = progressbar and sb.utils.distributed.if_main_process()
 
         # Iterate epochs
+<<<<<<< HEAD
         # whether shift from ASR train to co training
         cotrain = False
         lm_scale = 0
@@ -250,6 +281,14 @@ class ASR(sb.core.Brain):
                 else:
                     cotrain = False
 
+=======
+        # whether shift from co-train to ASR training
+        shift = False
+        for epoch in epoch_counter:
+            lm_loss = self._fit_train(train_set=train_set, epoch=epoch, enable=enable, shift = shift)
+            if lm_loss <= 3 or epoch >=6:
+                shift = True
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
             self._fit_valid(valid_set=valid_set, epoch=epoch, enable=enable)
 
             # Debug mode only runs a few epochs
@@ -383,7 +422,11 @@ class ASR(sb.core.Brain):
             self.hparams.ctc_weight * loss_ctc
             + (1 - self.hparams.ctc_weight) * loss_seq
         )
+<<<<<<< HEAD
         seq2seq_loss = (1 - self.hparams.ctc_weight) * loss_seq.detach().cpu()
+=======
+
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
         if stage != sb.Stage.TRAIN:
             current_epoch = self.hparams.epoch_counter.current
             valid_search_interval = self.hparams.valid_search_interval
@@ -399,7 +442,11 @@ class ASR(sb.core.Brain):
 
             # compute the accuracy of the one-step-forward prediction
             self.acc_metric.append(p_seq, tokens_eos, tokens_eos_lens)
+<<<<<<< HEAD
         return loss, seq2seq_loss
+=======
+        return loss
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
     def on_evaluate_start(self, max_key=None, min_key=None):
         """perform checkpoint averge if needed"""
@@ -422,11 +469,19 @@ class ASR(sb.core.Brain):
             predictions = self.compute_forward(batch, stage=stage)
             # ASR Losses are excluded from mixed precision to avoid instabilities
             asr_predictions = ( predictions[0], predictions[1][0], predictions[2], predictions[3], )
+<<<<<<< HEAD
             loss, seq_loss = self.compute_objectives(asr_predictions, batch, stage = stage)
         
         gc.collect()
         torch.cuda.empty_cache()
         del batch, seq_loss
+=======
+            loss = self.compute_objectives(asr_predictions, batch, stage = stage)
+        
+        gc.collect()
+        torch.cuda.empty_cache()
+        del batch
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
         return loss.detach()
 
@@ -436,12 +491,20 @@ class ASR(sb.core.Brain):
             self.acc_metric = self.hparams.acc_computer()
             self.wer_metric = self.hparams.error_rate_computer()
 
+<<<<<<< HEAD
     def on_stage_end(self, stage, stage_loss,  epoch, asr_loss = 0, lm_loss = 0, seq_loss=0):
+=======
+    def on_stage_end(self, stage, stage_loss,  epoch, asr_loss = 0, lm_loss = 0):
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
         """Gets called at the end of a epoch."""
         # Compute/store important stats
         
         if stage == sb.Stage.TRAIN:
+<<<<<<< HEAD
             stage_stats = {"loss": stage_loss, "asr_loss": asr_loss, "asr_seq_loss": seq_loss, "lm_loss": lm_loss}
+=======
+            stage_stats = {"loss": stage_loss, "asr_loss": asr_loss, "lm_loss": lm_loss}
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
             self.train_stats = stage_stats
         else:
             stage_stats = {"loss": stage_loss}
@@ -495,7 +558,11 @@ class ASR(sb.core.Brain):
                 num_to_keep=1,
             )
 
+<<<<<<< HEAD
     def fit_batch(self, batch, lm_scale = 0):
+=======
+    def fit_batch(self, batch):
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
         should_step = self.step % self.grad_accumulation_factor == 0
         # Managing automatic mixed precision
@@ -509,16 +576,26 @@ class ASR(sb.core.Brain):
                  # ASR losses 
                 asr_outputs = ( outputs[0], outputs[1][0], outputs[2], outputs[3], )
                 if type(batch) == list:
+<<<<<<< HEAD
                     asr_loss, seq_loss = self.compute_objectives(asr_outputs, batch[0], sb.Stage.TRAIN)
                 else:
                     asr_loss, seq_loss = self.compute_objectives(asr_outputs, batch, sb.Stage.TRAIN)
+=======
+                    asr_loss = self.compute_objectives(asr_outputs, batch[0], sb.Stage.TRAIN)
+                else:
+                    asr_loss = self.compute_objectives(asr_outputs, batch, sb.Stage.TRAIN)
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
                 # LM losses
                 if outputs[1][1] != None:
                     lm_loss = self.compute_lm_objectives(outputs[1][1], batch[1], sb.Stage.TRAIN)
                 else:
                     lm_loss = torch.tensor(0)
                 
+<<<<<<< HEAD
                 loss = asr_loss + lm_loss * lm_scale
+=======
+                loss = asr_loss + lm_loss
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
             else:
                 assert False, f"Output shape must be len 2, with asr and lm result"
             if self.log_to_wandb:
@@ -544,7 +621,12 @@ class ASR(sb.core.Brain):
         torch.cuda.empty_cache()
         del batch
 
+<<<<<<< HEAD
         return loss.detach().cpu(), asr_loss.detach().cpu(), lm_loss.detach().cpu(), seq_loss
+=======
+        return loss.detach().cpu(), asr_loss.detach().cpu(), lm_loss.detach().cpu()
+        # return loss.detach().cpu(), asr_loss.detach().cpu(), 0
+>>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
 
 
 def dataio_prepare(hparams):
