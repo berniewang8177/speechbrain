@@ -11,7 +11,7 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/Random_init_Frozen_all_100h_interleaveformer_with_lm_init_5kwarm_6-22/<seed>
+output_folder: !ref results/CoTraining_after_asr_seq100losss_no_pretrain_960h_3k_warmup_stop_0.5loss/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -24,17 +24,24 @@ wandb_log: False
 # instead. E.g if you want to use your own LM / tokenizer.
 pretrained_lm_tokenizer_path: speechbrain/asr-transformer-transformerlm-librispeech
 
+# training mode
+train_mode: 2 # 0 is text-only pre-train, 1 is asr only (debugging), 2 is co-training
+
 # Data files
 data_folder: !PLACEHOLDER # e.g., /path/to/LibriSpeech
 # If RIRS_NOISES dir exists in /localscratch/xxx_corpus/RIRS_NOISES
 # then data_folder_rirs should be /localscratch/xxx_corpus
 # otherwise the dataset will automatically be downloaded
 # data_folder_rirs: !ref <data_folder>
-train_splits: ["train-clean-100"]
+
+# Below asr audio-text dataset
+train_splits: ["train-clean-100"] # asr audio-text training dataset
+lm_splits: ["train-clean-100", "train-clean-360", "train-other-500"]
 dev_splits: ["dev-clean"]
 test_splits: ["test-clean", "test-other"]
 skip_prep: False
 train_csv: !ref <output_folder>/train.csv
+train_lm_csv: !ref <output_folder>/train_lm.csv
 valid_csv: !ref <output_folder>/dev-clean.csv
 test_csv:
     - !ref <output_folder>/test-clean.csv
@@ -47,7 +54,7 @@ ckpt_interval_minutes: 30 # save checkpoint every N min
 # The global batch size is computed as batch_size * n_gpus * gradient_accumulation.
 # Empirically, we found that this value should be >= 128.
 # Please, set your parameters accordingly.
-number_of_epochs: 100 # 
+number_of_epochs: 60 # 60 original, 60 * 3.5 to match 300h, 212
 batch_size: 24 # 16G for 24
 ctc_weight: 0.3
 grad_accumulation_factor: 2
@@ -142,12 +149,11 @@ Transformer: !new:speechbrain.lobes.models.transformer.InterleaveFormerASR.Inter
     encoder_module: InterleaveFormer
     attention_type: regularMHA
     normalize_before: True
-    causal: False
+    causal: True
     init_path: ""
     audio_expert_init_path: ""
-    # audio_expert_init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/audio_expert/lm-init-model.ckpt"
-    # init_path: ""
-    # init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/model-6-22.ckpt"
+
+    # /home/yiqiw2/experiment/ASR_meets_LM/model_asset/960h_lm_model.ckpt
 
 # This is the TransformerLM that is used according to the Huggingface repository
 # Visit the HuggingFace model corresponding to the pretrained_lm_tokenizer_path
@@ -238,7 +244,7 @@ seq_cost: !name:speechbrain.nnet.losses.kldiv_loss
 
 noam_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr_adam>
-    n_warmup_steps: 5000 # 1900, 3k seems the best
+    n_warmup_steps: 3000 # 1900, 3k seems the best
 
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>
@@ -275,6 +281,8 @@ compute_features: !new:speechbrain.lobes.features.Fbank
     sample_rate: !ref <sample_rate>
     n_fft: !ref <n_fft>
     n_mels: !ref <n_mels>
+
+compute_lm_cost: !name:speechbrain.nnet.losses.nll_loss
 
 train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
     save_file: !ref <train_log>

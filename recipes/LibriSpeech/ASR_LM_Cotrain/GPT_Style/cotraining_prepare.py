@@ -12,29 +12,29 @@ import os
 import csv
 import random
 from collections import Counter
-from dataclasses import dataclass
-import functools
 import logging
+import torchaudio
+from tqdm.contrib import tzip
 from speechbrain.utils.data_utils import download_file, get_all_files
 from speechbrain.dataio.dataio import (
     load_pkl,
     save_pkl,
     merge_csvs,
-    read_audio_info,
 )
-from speechbrain.utils.parallel import parallel_map
 
 logger = logging.getLogger(__name__)
 OPT_FILE = "opt_librispeech_prepare.pkl"
 SAMPLERATE = 16000
-
+CSV_PATH = '/home/yiqiw2/experiment/ASR_meets_LM/speechbrain/recipes/LibriSpeech/ASR_LM_Cotrain/csvs'
 
 def prepare_librispeech(
+    mode,
     data_folder,
     save_folder,
     tr_splits=[],
     dev_splits=[],
     te_splits=[],
+    lm_splits = [],
     select_n_sentences=None,
     merge_lst=[],
     merge_name=None,
@@ -47,6 +47,8 @@ def prepare_librispeech(
 
     Arguments
     ---------
+    mode : int
+        0 is Language modeling, 1 is for asr, 2 is for co-trianing
     data_folder : str
         Path to the folder where the original LibriSpeech dataset is stored.
     tr_splits : list
@@ -56,6 +58,8 @@ def prepare_librispeech(
         List of dev splits to prepare from ['dev-clean','dev-others'].
     te_splits : list
         List of test splits to prepare from ['test-clean','test-others'].
+    lm_splits : list
+        list of splits used to merge as train_lm.csv
     save_folder : str
         The directory where to store the csv files.
     select_n_sentences : int
@@ -65,7 +69,7 @@ def prepare_librispeech(
         List of librispeech splits (e.g, train-clean, train-clean-360,..) to
         merge in a singe csv file.
     merge_name: str
-        Name of the merged csv file.
+        Name of the merged csv file for Language modeling.
     create_lexicon: bool
         If True, it outputs csv files containing mapping between grapheme
         to phonemes. Use it for training a G2P system.
@@ -86,7 +90,15 @@ def prepare_librispeech(
     if skip_prep:
         return
     data_folder = data_folder
+    if mode == 0:
+        # training files are LM files
+        tr_splits = lm_splits 
+
+    if mode == 2:
+        tr_splits += lm_splits 
+        tr_splits = list(set(tr_splits))
     splits = tr_splits + dev_splits + te_splits
+
     save_folder = save_folder
     select_n_sentences = select_n_sentences
     conf = {
@@ -100,56 +112,45 @@ def prepare_librispeech(
 
     save_opt = os.path.join(save_folder, OPT_FILE)
 
-    # Check if this phase is already done (if so, skip it)
-    if skip(splits, save_folder, conf):
-        logger.info("Skipping preparation, completed in previous run.")
-        return
+    if sum( ['wiki' in x for x in splits]) == 0:
+        # Additional checks to make sure the data folder contains Librispeech
+        check_librispeech_folders(data_folder, splits)
     else:
-        logger.info("Data_preparation...")
+        # wiki-103 don't check
+        pass
 
-    # Additional checks to make sure the data folder contains Librispeech
-    check_librispeech_folders(data_folder, splits)
+    # create csv file symbolic link for files
+    for idx, split_name in enumerate(splits):
+        # only ASR or Co-training need test files
+        if mode == 0  and 'test' in split_name:
+            continue
+        src_path = os.path.join( CSV_PATH, split_name + '.csv' )
+        dst_path = os.path.join( save_folder, split_name + '.csv' )
+        
+        if not os.path.islink(dst_path):
+            try:
+                os.symlink(src_path, dst_path)
+            except:
+                assert False, f"{os.path.islink(dst_path)} dst_path: {dst_path}"
+    
+    logger.info("ASR Data_preparation is done")
 
-    # create csv files for each split
-    all_texts = {}
-    for split_index in range(len(splits)):
-
-        split = splits[split_index]
-
-        wav_lst = get_all_files(
-            os.path.join(data_folder, split), match_and=[".flac"]
-        )
-
-        text_lst = get_all_files(
-            os.path.join(data_folder, split), match_and=["trans.txt"]
-        )
-
-        text_dict = text_to_dict(text_lst)
-        all_texts.update(text_dict)
-
-        if select_n_sentences is not None:
-            n_sentences = select_n_sentences[split_index]
-        else:
-            n_sentences = len(wav_lst)
-
-        create_csv(
-            save_folder, wav_lst, text_dict, split, n_sentences,
-        )
-
-    # Merging csv file if needed
+    # Merging csv file for LM
     if merge_lst and merge_name is not None:
-        merge_files = [split_libri + ".csv" for split_libri in merge_lst]
+        merge_files = [ split + '.csv' for split in lm_splits ]
         merge_csvs(
-            data_folder=save_folder, csv_lst=merge_files, merged_csv=merge_name,
+            data_folder=CSV_PATH, csv_lst=merge_files, merged_csv=merge_name,
         )
-
-    # Create lexicon.csv and oov.csv
-    if create_lexicon:
-        create_lexicon_and_oov_csv(all_texts, data_folder, save_folder)
+    # combine LM files into 1 (ASR don't have to, just train-clean-100)
+    lm_csv_path_dst = os.path.join( save_folder, merge_name)
+    if not os.path.islink(lm_csv_path_dst):
+        lm_csv_path_src = os.path.join( CSV_PATH, merge_name)
+        os.symlink(lm_csv_path_src, lm_csv_path_dst )
+    
+    logger.info("LM Data_preparation is done")
 
     # saving options
     save_pkl(conf, save_opt)
-
 
 def create_lexicon_and_oov_csv(all_texts, data_folder, save_folder):
     """
@@ -262,33 +263,6 @@ def split_lexicon(data_folder, split_ratio):
         f.writelines(test_lines)
 
 
-@dataclass
-class LSRow:
-    snt_id: str
-    spk_id: str
-    duration: float
-    file_path: str
-    words: str
-
-
-def process_line(wav_file, text_dict) -> LSRow:
-    snt_id = wav_file.split("/")[-1].replace(".flac", "")
-    spk_id = "-".join(snt_id.split("-")[0:2])
-    wrds = text_dict[snt_id]
-    wrds = " ".join(wrds.split("_"))
-
-    info = read_audio_info(wav_file)
-    duration = info.num_frames / info.sample_rate
-
-    return LSRow(
-        snt_id=snt_id,
-        spk_id=spk_id,
-        duration=duration,
-        file_path=wav_file,
-        words=wrds,
-    )
-
-
 def create_csv(
     save_folder, wav_lst, text_dict, split, select_n_sentences,
 ):
@@ -325,25 +299,30 @@ def create_csv(
     csv_lines = [["ID", "duration", "wav", "spk_id", "wrd"]]
 
     snt_cnt = 0
-    line_processor = functools.partial(process_line, text_dict=text_dict)
     # Processing all the wav files in wav_lst
-    # FLAC metadata reading is already fast, so we set a high chunk size
-    # to limit main thread CPU bottlenecks
-    for row in parallel_map(line_processor, wav_lst, chunk_size=8192):
+    for wav_file in tzip(wav_lst):
+        wav_file = wav_file[0]
+
+        snt_id = wav_file.split("/")[-1].replace(".flac", "")
+        spk_id = "-".join(snt_id.split("-")[0:2])
+        wrds = text_dict[snt_id]
+
+        signal, fs = torchaudio.load(wav_file)
+        signal = signal.squeeze(0)
+        duration = signal.shape[0] / SAMPLERATE
+
         csv_line = [
-            row.snt_id,
-            str(row.duration),
-            row.file_path,
-            row.spk_id,
-            row.words,
+            snt_id,
+            str(duration),
+            wav_file,
+            spk_id,
+            str(" ".join(wrds.split("_"))),
         ]
 
-        # Appending current file to the csv_lines list
+        #  Appending current file to the csv_lines list
         csv_lines.append(csv_line)
-
         snt_cnt = snt_cnt + 1
 
-        # parallel_map guarantees element ordering so we're OK
         if snt_cnt == select_n_sentences:
             break
 

@@ -20,7 +20,7 @@ def Accuracy(log_probabilities, targets, length=None):
         Length of target (batch_size,).
 
     Example
-    -------
+    ------- 
     >>> probs = torch.tensor([[0.9, 0.1], [0.1, 0.9], [0.8, 0.2]]).unsqueeze(0)
     >>> acc = Accuracy(torch.log(probs), torch.tensor([1, 1, 0]).unsqueeze(0), torch.tensor([2/3]))
     >>> print(acc)
@@ -76,7 +76,9 @@ class AccuracyStats:
         length: tensor
             Length of target (batch_size,).
         """
+        # print(log_probabilities, targets)
         numerator, denominator = Accuracy(log_probabilities, targets, length)
+        # print(numerator, denominator)
         self.correct += numerator
         self.total += denominator
 
