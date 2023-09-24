@@ -36,6 +36,7 @@ Authors
 
 import os
 import sys
+import numpy as np
 import gc
 import torch
 from torch.utils.data import DataLoader
@@ -62,7 +63,7 @@ logger = logging.getLogger(__name__)
 # Define training procedure
 class ASR(sb.core.Brain):
 
-    def _fit_train(self, train_set, epoch, enable, cotrain = False, lm_scale = 0):
+    def _fit_train(self, train_set, epoch, enable, cotrain = False, asr_scale = 1):
         # train_set here is list: [ asr_dataset, lm_dataset]
 
         # Training stage
@@ -105,15 +106,20 @@ class ASR(sb.core.Brain):
                     batch = asr_batch
                 else:
                     # How much we learn from LM depends on asr 
-                    lm_batch = next(iter(train_set[1]))
+                    try:
+                        lm_batch = next(iter(train_set[1]))
+                    except:
+                        # use backup dataset to create the lm dataset
+                        train_set[1] = self.make_dataloader(
+                            train_set[2], stage=sb.Stage.TRAIN, **train_loader_kwargs[1]
+                        )
+                        lm_batch = next(iter(train_set[1]))
                     batch = [ asr_batch, lm_batch ]
                 
-                loss, asr_loss, lm_loss, seq_loss = self.fit_batch(batch, lm_scale = lm_scale)
+                loss, asr_loss, lm_loss, seq_loss = self.fit_batch(batch, asr_scale = asr_scale)
                 self.avg_train_loss = self.update_average(
                     loss, self.avg_train_loss
                 )
-                t.set_postfix(train_loss=self.avg_train_loss, asr_loss=asr_losses, seq_loss=seq_losses, scaled_lm_loss=lm_losses * lm_scale, lm_scale=lm_scale)
-
                 asr_losses = self.update_average(
                     asr_loss, asr_losses)
                 if lm_losses > 0 and lm_loss == 0:
@@ -129,6 +135,12 @@ class ASR(sb.core.Brain):
                 seq_losses = self.update_average(
                     seq_loss, seq_losses)
 
+                # set loss print to screen
+                t.set_postfix( 
+                    train_loss=self.avg_train_loss, 
+                    scaled_asr_loss=asr_losses * asr_scale,  
+                    lm_loss=lm_losses,  
+                    asr_loss = asr_losses, asr_scale=asr_scale, seq_loss=seq_losses, )
                 # Profile only if desired (steps allow the profiler to know when all is warmed up)
                 if self.profiler is not None:
                     if self.profiler.record_steps:
@@ -160,7 +172,8 @@ class ASR(sb.core.Brain):
         self.avg_train_loss = 0.0
         self.step = 0
 
-        return lm_losses, seq_losses
+        # return the LM datset to reuse in the next epochs
+        return lm_losses, seq_losses, train_set[1]
 
     def fit(
         self,
@@ -220,7 +233,9 @@ class ASR(sb.core.Brain):
             train_lm_set = self.make_dataloader(
                 train_set[1], stage=sb.Stage.TRAIN, **train_loader_kwargs[1]
             )
-            train_set = [train_asr_set, train_lm_set]
+            # for LM, creat a backup version !!
+            # so that if next() is not happy, create a new one for it!
+            train_set = [train_asr_set, train_lm_set, train_set[1]]
         if valid_set is not None and not (
             isinstance(valid_set, DataLoader)
             or isinstance(valid_set, LoopedLoader)
@@ -242,21 +257,25 @@ class ASR(sb.core.Brain):
 
         # Iterate epochs
         # whether shift from ASR train to co training
-        cotrain = False
-        lm_scale = 0
+        cotrain = True
+
+        x = list( np.linspace(0.01, 0.05,  4) )
+        y = list( np.logspace(-4, 0, base=2, num=16) )
+        asr_scales = x + y
+
         for epoch in epoch_counter:
-            unscaled_lm_loss, seq_loss = self._fit_train(train_set=train_set, epoch=epoch, enable=enable, cotrain = cotrain, lm_scale = lm_scale)
-            if seq_loss <= 100:
-                # set to cotrain if ASR is making enough progresss
-                cotrain = True
-                if unscaled_lm_loss == 0:
-                    # last epoch doesn't have LM training, set inital loss scaling
-                    lm_scale = 10
-                elif unscaled_lm_loss >= 1:
-                    # set lm loss same to asr seq loss scale
-                    lm_scale = seq_loss // unscaled_lm_loss 
-                else:
-                    cotrain = False
+            if len(asr_scales) > 1:
+                asr_scale = asr_scales.pop(0)
+            else:
+                asr_scale = asr_scale[0]
+            unscaled_lm_loss, seq_loss, lm_dataset = self._fit_train(train_set=train_set, epoch=epoch, enable=enable, cotrain = cotrain, asr_scale = asr_scale)
+            # we could reuse the last lm_dataset (if not finished in the last epoch) in the next epoch.
+            train_set[1] = lm_dataset
+
+            # Change cotrain to asr only if lm has been small.
+            cotrain = True
+            if unscaled_lm_loss < 1:
+                cotrain = False
 
             self._fit_valid(valid_set=valid_set, epoch=epoch, enable=enable)
 
@@ -503,7 +522,7 @@ class ASR(sb.core.Brain):
                 num_to_keep=1,
             )
 
-    def fit_batch(self, batch, lm_scale = 0):
+    def fit_batch(self, batch, asr_scale = 1):
 
         should_step = self.step % self.grad_accumulation_factor == 0
         # Managing automatic mixed precision
@@ -526,14 +545,14 @@ class ASR(sb.core.Brain):
                 else:
                     lm_loss = torch.tensor(0)
                 
-                loss = asr_loss + lm_loss * lm_scale
+                loss = asr_loss *  asr_scale + lm_loss 
             else:
                 assert False, f"Output shape must be len 2, with asr and lm result"
             if self.log_to_wandb:
                 wandb.log({
                     "total_loss": loss.item(), 
-                    "asr_loss": asr_loss.item(), 
-                    'seq_loss': seq_loss,
+                    "scaled_asr_loss": asr_loss.item() * asr_scale, 
+                    'unscaled_seq_loss': seq_loss,
                     "nonfinite_count": self.nonfinite_count,
                     })
             with self.no_sync(not should_step):
@@ -577,6 +596,7 @@ def dataio_prepare(hparams):
         csv_path=hparams["train_lm_csv"], replacements={"data_root": data_folder} )
     if len(train_asr_data) < len(train_lm_data):
         batch_len_scale = int( round( len(train_lm_data) / len(train_asr_data)) )
+        print( '*'*40, f"\nbatch_len_scale of LM is: {batch_len_scale}, set it to 1 NOW\n", '*'*40 ) 
     else:
         assert False, f"LM should larger than ASR size"
 

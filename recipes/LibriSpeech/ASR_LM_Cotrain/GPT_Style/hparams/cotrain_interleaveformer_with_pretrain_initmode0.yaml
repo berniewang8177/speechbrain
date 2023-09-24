@@ -11,7 +11,7 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/CoTraining_wiki103_pretrain_960h_3k_warmup/<seed>
+output_folder: !ref results/Initmode0_wiki103_pretrain_960h_3k_warmup_start100seqloss_stop_1loss/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -150,8 +150,10 @@ Transformer: !new:speechbrain.lobes.models.transformer.InterleaveFormerASR.Inter
     attention_type: regularMHA
     normalize_before: True
     causal: True
-    init_path: ""
+    init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/wiki103_lm_model.ckpt"
     audio_expert_init_path: ""
+    init_mode: 0
+
     # /home/yiqiw2/experiment/ASR_meets_LM/model_asset/960h_lm_model.ckpt
 
 # This is the TransformerLM that is used according to the Huggingface repository
@@ -241,9 +243,12 @@ seq_cost: !name:speechbrain.nnet.losses.kldiv_loss
     label_smoothing: !ref <label_smoothing>
     reduction: !ref <loss_reduction>
 
-noam_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
-    lr_initial: !ref <lr_adam>
-    n_warmup_steps: 3000 # 1900, 3k seems the best
+# this is used by transformer training
+# noam_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
+#     lr_initial: !ref <lr_adam>
+#     n_warmup_steps: 3000 # 1900, 3k seems the best
+
+noam_annealing: !new:speechbrain.nnet.schedulers.DummyScheduler
 
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>

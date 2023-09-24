@@ -842,6 +842,65 @@ class CyclicLRScheduler:
         self.losses = data["losses"]
         self.clr_iterations = data["clr_iterations"]
 
+@checkpoints.register_checkpoint_hooks
+class DummyScheduler:
+    """A simple scheduler that don't change the learning rate.
+    """
+
+    def __init__(self):
+        self.n_steps = 0
+        self.losses = []
+        self._compute_next()
+
+    def __call__(self, opt):
+        """
+        Arguments
+        ---------
+        opt : optimizer
+            The optimizer to update using this scheduler.
+        Returns
+        -------
+        current_lr : float
+            The learning rate before the update.
+        lr : float
+            The learning rate after the update.
+        """
+        self.n_steps += 1
+
+        current_lr = opt.param_groups[0]["lr"]
+
+        lr = self._get_lr(current_lr)
+
+        # Changing the learning rate within the optimizer
+        for param_group in opt.param_groups:
+            param_group["lr"] = lr
+
+        self.current_lr = current_lr
+        return current_lr, lr
+
+    def _compute_next(self):
+        pass
+
+    def _get_lr(self, current_lr):
+        """My dummy schedule do nothing"""
+        return current_lr
+
+    @checkpoints.mark_as_saver
+    def save(self, path):
+        """Saves the current metrics on the specified path."""
+        data = {"losses": self.losses, "n_steps": self.n_steps}
+        torch.save(data, path)
+
+    @checkpoints.mark_as_loader
+    def load(self, path, end_of_epoch=False, device=None):
+        """Loads the needed information."""
+        del end_of_epoch  # Unused in this class
+        del device
+        data = torch.load(path)
+        self.losses = data["losses"]
+        self.n_steps = data["n_steps"]
+        self._compute_next()
+
 
 @checkpoints.register_checkpoint_hooks
 class IntervalScheduler:

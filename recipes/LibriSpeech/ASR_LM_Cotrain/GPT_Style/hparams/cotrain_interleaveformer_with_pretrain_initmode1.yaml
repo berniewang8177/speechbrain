@@ -11,11 +11,11 @@
 
 seed: 74443
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/CoTraining_wiki103_pretrain_960h_3k_warmup/<seed>
+output_folder: !ref results/Initmode1_wiki103_pretrain_960h_3k_warmup_start100seqloss_stop_1loss/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
-wandb_log: False
+wandb_log: True
 # Language model (LM) pretraining
 # NB: To avoid mismatch, the speech recognizer must be trained with the same
 # tokenizer used for LM training. Here, we download everything from the
@@ -54,7 +54,7 @@ ckpt_interval_minutes: 30 # save checkpoint every N min
 # The global batch size is computed as batch_size * n_gpus * gradient_accumulation.
 # Empirically, we found that this value should be >= 128.
 # Please, set your parameters accordingly.
-number_of_epochs: 60 # 60 original, 60 * 3.5 to match 300h, 212
+number_of_epochs: 80 # 60 original, 60 * 3.5 to match 300h, 212
 batch_size: 24 # 16G for 24
 ctc_weight: 0.3
 grad_accumulation_factor: 2
@@ -79,7 +79,7 @@ dynamic_batch_sampler:
     max_batch_ex: 128
 
 # stages related parameters
-lr_adam: 0.001
+lr_adam: 0.0008
 
 # Feature parameters
 sample_rate: 16000
@@ -119,7 +119,7 @@ eos_index: 2
 # Decoding parameters
 min_decode_ratio: 0.0
 max_decode_ratio: 1.0
-valid_search_interval: 60
+valid_search_interval: 80
 valid_beam_size: 10
 test_beam_size: 66
 lm_weight: 0.60
@@ -150,8 +150,10 @@ Transformer: !new:speechbrain.lobes.models.transformer.InterleaveFormerASR.Inter
     attention_type: regularMHA
     normalize_before: True
     causal: True
-    init_path: ""
-    audio_expert_init_path: ""
+    init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/wiki103_lm_model.ckpt"
+    audio_expert_init_path: "/home/yiqiw2/experiment/ASR_meets_LM/model_asset/wiki103pretrain_audioexpert_model.ckpt"
+    init_mode: 1
+
     # /home/yiqiw2/experiment/ASR_meets_LM/model_asset/960h_lm_model.ckpt
 
 # This is the TransformerLM that is used according to the Huggingface repository
@@ -241,9 +243,10 @@ seq_cost: !name:speechbrain.nnet.losses.kldiv_loss
     label_smoothing: !ref <label_smoothing>
     reduction: !ref <loss_reduction>
 
+# this is used by transformer training
 noam_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr_adam>
-    n_warmup_steps: 3000 # 1900, 3k seems the best
+    n_warmup_steps: 4000 # 1900, 3k seems the best for 60 epochs
 
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>

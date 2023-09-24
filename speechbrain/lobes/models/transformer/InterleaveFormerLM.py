@@ -89,11 +89,8 @@ class InterleaveFormerLM(InterleaveFormerInterface):
             self.d_embedding = d_model
         # assert False, f"{self.d_embedding} {vocab} {d_model}"
         # self.custom_src_module = NormalizedEmbedding(self.d_embedding, vocab)
-<<<<<<< HEAD
         self.custom_src_module = NormalizedEmbedding(d_model, vocab)
-=======
-        self.custom_src_module = NormalizedEmbedding(self.d_model, vocab)
->>>>>>> d96768f3e5a83082cbfef02fdc15a8e6df7a09ed
+
 
         self.embedding_proj = None
         # if d_embedding is not None:
